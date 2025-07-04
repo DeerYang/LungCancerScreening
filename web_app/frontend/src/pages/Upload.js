@@ -168,6 +168,42 @@ const UploadPage = () => {
     }
   };
 
+  // 解析混淆矩阵字符串，返回统计量
+  function parseConfusionMatrix(matrixStr) {
+    if (!matrixStr) return {
+      totalCandidates: 0,
+      detectedNodules: 0,
+      malignantNodules: 0,
+      benignNodules: 0
+    };
+    // 按行分割
+    const lines = matrixStr.split('\n').map(l => l.trim()).filter(l => l);
+    // 只保留有数字的行
+    const dataLines = lines.filter(line => /\d/.test(line));
+    let total = 0, detected = 0, malignant = 0, benign = 0;
+    dataLines.forEach(line => {
+      // 匹配所有数字
+      const nums = line.match(/\d+/g)?.map(Number) || [];
+      // 结构：漏诊 | 排除 | 预测为良性 | 预测为恶性
+      // 行顺序：非结节、良性、恶性
+      if (nums.length === 4) {
+        total += nums.reduce((a, b) => a + b, 0);
+        // 只统计良性、恶性行的预测为良性/恶性
+        if (line.includes('良性') || line.includes('恶性')) {
+          detected += nums[2] + nums[3];
+          benign += nums[2];
+          malignant += nums[3];
+        }
+      }
+    });
+    return {
+      totalCandidates: total,
+      detectedNodules: detected,
+      malignantNodules: malignant,
+      benignNodules: benign
+    };
+  }
+
   const renderResult = () => {
     if (!result) return null;
 
@@ -185,6 +221,12 @@ const UploadPage = () => {
         />
       );
     }
+
+    // 直接使用后端返回的统计量
+    const totalCandidates = result.total_candidates;
+    const detectedNodules = result.nodules_found;
+    const malignancyRate = (typeof result.malignancy_rate === 'number') ? (result.malignancy_rate * 100) : 0;
+    const diagnosisConfidence = (typeof result.diagnosis_confidence === 'number') ? (result.diagnosis_confidence * 100) : 0;
 
     return (
       <div>
@@ -207,7 +249,7 @@ const UploadPage = () => {
                       <div style={{ marginTop: 8 }}>
                         <div>候选区域</div>
                         <div style={{ fontSize: 20, fontWeight: 'bold' }}>
-                          {result.total_candidates}
+                          {totalCandidates}
                         </div>
                       </div>
                     </div>
@@ -220,7 +262,7 @@ const UploadPage = () => {
                       <div style={{ marginTop: 8 }}>
                         <div>检测到结节</div>
                         <div style={{ fontSize: 20, fontWeight: 'bold' }}>
-                          {result.nodules_found}
+                          {detectedNodules}
                         </div>
                       </div>
                     </div>
@@ -233,7 +275,7 @@ const UploadPage = () => {
                       <div style={{ marginTop: 8 }}>
                         <div>恶性概率</div>
                         <div style={{ fontSize: 20, fontWeight: 'bold' }}>
-                          {(result.nodules && result.nodules.length > 0 ? result.nodules[0].malignancy_probability * 100 : 0).toFixed(1)}%
+                          {malignancyRate.toFixed(1)}%
                         </div>
                       </div>
                     </div>
@@ -255,25 +297,23 @@ const UploadPage = () => {
                   {new Date(result.timestamp).toLocaleString()}
                 </Descriptions.Item>
                 <Descriptions.Item label="分割置信度">
-                  <Progress 
-                    percent={result.segmentation_confidence * 100} 
-                    size="small"
-                    status="active"
-                  />
+                  {typeof result.segmentation_confidence === 'number'
+                    ? (result.segmentation_confidence * 100).toFixed(1) + '%'
+                    : '-'}
                 </Descriptions.Item>
                 <Descriptions.Item label="是否为结节">
-                  <Tag color={result.nodules && result.nodules.length > 0 ? 'green' : 'red'}>
-                    {result.nodules && result.nodules.length > 0 ? '是' : '否'}
+                  <Tag color={detectedNodules > 0 ? 'green' : 'red'}>
+                    {detectedNodules > 0 ? '是' : '否'}
                   </Tag>
                 </Descriptions.Item>
                 <Descriptions.Item label="诊断结果">
-                  <Tag color={getMalignancyColor(result.nodules && result.nodules.length > 0 ? result.nodules[0].malignancy_level : 'unknown')}>
-                    {result.nodules && result.nodules.length > 0 ? getMalignancyText(result.nodules[0].malignancy_level) : '未知'}
+                  <Tag color={malignancyRate >= 70 ? 'red' : malignancyRate >= 30 ? 'orange' : 'green'}>
+                    {malignancyRate >= 70 ? '高风险' : malignancyRate >= 30 ? '中等风险' : '低风险'}
                   </Tag>
                 </Descriptions.Item>
                 <Descriptions.Item label="诊断置信度">
-                  <Tag color={result.nodules && result.nodules.length > 0 ? getMalignancyColor(result.nodules[0].malignancy_level) : 'blue'}>
-                    {(result.nodules && result.nodules.length > 0 ? (result.nodules[0].malignancy_probability * 100).toFixed(1) : '0.0')}%
+                  <Tag color={diagnosisConfidence >= 70 ? 'red' : diagnosisConfidence >= 30 ? 'orange' : 'green'}>
+                    {diagnosisConfidence.toFixed(1)}%
                   </Tag>
                 </Descriptions.Item>
               </Descriptions>

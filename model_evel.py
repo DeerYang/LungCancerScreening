@@ -82,7 +82,7 @@ def print_confusion(label, confusions, do_mal):
         r = [l] + list(r)
         # 非结节行的漏诊列留空
         if i == 0:
-            r[1] = ''
+            r[1] = '0'
         print(' | '.join([f.format(i) for i in r]))
 
 
@@ -178,7 +178,7 @@ class NoduleAnalysisApp:
         parser.add_argument('--run-validation',
                             help='是否对所有的CT影像进行验证',
                             action='store_true',
-                            default=True,
+                            default=False,
                             )
         # 是否包含训练集（默认只验证）
         parser.add_argument('--include-train',
@@ -219,7 +219,7 @@ class NoduleAnalysisApp:
         # CT影像文件标识
         parser.add_argument('series_uid',
                             nargs='?',
-                            default=None,
+                            default="1.3.6.1.4.1.14519.5.2.1.6279.6001.105756658031515062000744821260",
                             help="指定要使用的CT影像文件的标识",
                             )
 
@@ -242,7 +242,7 @@ class NoduleAnalysisApp:
         """初始化分割模型、分类模型和恶性肿瘤分类模型"""
         log.debug(self.cli_args.segmentation_path)
         # 加载分割模型状态字典
-        seg_dict = torch.load(self.cli_args.segmentation_path)
+        seg_dict = torch.load(self.cli_args.segmentation_path, map_location=torch.device('cpu'))
 
         # 创建UNet分割模型
         seg_model = UNetWrapper(
@@ -262,7 +262,7 @@ class NoduleAnalysisApp:
 
         log.debug(self.cli_args.classification_path)
         # 加载分类模型状态字典
-        cls_dict = torch.load(self.cli_args.classification_path)
+        cls_dict = torch.load(self.cli_args.classification_path, map_location=torch.device('cpu'))
 
         # 动态获取分类模型类并实例化
         model_cls = getattr(TumorModel, self.cli_args.cls_model)
@@ -287,7 +287,7 @@ class NoduleAnalysisApp:
         if self.cli_args.malignancy_path:
             model_cls = getattr(TumorModel, self.cli_args.malignancy_model)
             malignancy_model = model_cls()
-            malignancy_dict = torch.load(self.cli_args.malignancy_path)
+            malignancy_dict = torch.load(self.cli_args.malignancy_path, map_location=torch.device('cpu'))
             malignancy_model.load_state_dict(malignancy_dict['model_state'])
             malignancy_model.eval()
             if self.use_cuda:
