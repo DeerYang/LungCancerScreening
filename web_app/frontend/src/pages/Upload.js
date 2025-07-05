@@ -11,142 +11,106 @@ import {
   Progress,
   Alert,
   Spin,
-  Image,
-  Divider,
   message,
   List,
   Space,
-  Typography
+  Typography,
+  Empty,
+  Avatar
 } from 'antd';
-import { 
-  InboxOutlined, 
-  FileImageOutlined,
+import {
+  InboxOutlined,
   CheckCircleOutlined,
   ExclamationCircleOutlined,
-  ClockCircleOutlined,
   UploadOutlined,
-  FileTextOutlined,
-  CloseCircleOutlined
+  CloseCircleOutlined,
+  HeartOutlined,
+  RadarChartOutlined,
+  WarningOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
 
-const { Dragger } = Upload;
-const { Title, Text } = Typography;
+const { Title } = Typography;
 
 const UploadPage = () => {
   const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [result, setResult] = useState(null);
   const [mhdFile, setMhdFile] = useState(null);
   const [rawFile, setRawFile] = useState(null);
 
-  const handleMhdFileChange = (info) => {
-    const file = info.file;
+  // ... (所有JS逻辑函数保持不变) ...
+  const handleMhdFileChange = ({ file }) => {
     if (file.status === 'removed') {
       setMhdFile(null);
-      return;
+    } else {
+      setMhdFile(file);
     }
-    
-    if (file.type !== '' && !file.name.endsWith('.mhd')) {
-      message.error('请选择.mhd文件');
-      return;
-    }
-    
-    setMhdFile(file);
   };
 
-  const handleRawFileChange = (info) => {
-    const file = info.file;
+  const handleRawFileChange = ({ file }) => {
     if (file.status === 'removed') {
       setRawFile(null);
-      return;
+    } else {
+      setRawFile(file);
     }
-    
-    if (file.type !== '' && !file.name.endsWith('.raw')) {
-      message.error('请选择.raw文件');
-      return;
-    }
-    
-    setRawFile(file);
   };
 
   const resetUpload = () => {
-    // 重置所有状态
     setMhdFile(null);
     setRawFile(null);
     setResult(null);
     setUploading(false);
-    setUploadProgress(0);
-    message.success('已重置，请重新选择文件');
+    message.success('已重置，可以开始新的分析。');
   };
 
   const handleUpload = async () => {
     if (!mhdFile || !rawFile) {
-      message.error('请选择.mhd和.raw文件对');
+      message.error('请同时选择 .mhd 和 .raw 文件');
       return;
     }
-
-    // 检查文件名是否匹配
-    const mhdName = mhdFile.name.replace('.mhd', '');
-    const rawName = rawFile.name.replace('.raw', '');
-    
-    if (mhdName !== rawName) {
-      message.error('文件名不匹配，请确保.mhd和.raw文件来自同一个CT扫描');
+    if (mhdFile.name.replace('.mhd', '') !== rawFile.name.replace('.raw', '')) {
+      message.error('文件名不匹配，请确保文件来自同一次CT扫描');
       return;
     }
 
     setUploading(true);
-    setUploadProgress(0);
     setResult(null);
 
     const formData = new FormData();
-    // 使用文件对象本身，如果originFileObj不存在则使用文件对象
-    const mhdFileObj = mhdFile.originFileObj || mhdFile;
-    const rawFileObj = rawFile.originFileObj || rawFile;
-    
-    // 添加调试信息
-    console.log('MHD文件对象:', mhdFileObj);
-    console.log('RAW文件对象:', rawFileObj);
-    console.log('MHD文件名:', mhdFileObj.name);
-    console.log('RAW文件名:', rawFileObj.name);
-    
-    formData.append('mhd_file', mhdFileObj);
-    formData.append('raw_file', rawFileObj);
+    formData.append('mhd_file', mhdFile.originFileObj || mhdFile);
+    formData.append('raw_file', rawFile.originFileObj || rawFile);
 
     try {
-      // 模拟上传进度
-      const progressInterval = setInterval(() => {
-        setUploadProgress(prev => {
-          if (prev >= 90) {
-            clearInterval(progressInterval);
-            return prev;
-          }
-          return prev + 10;
-        });
-      }, 200);
-
-      const response = await axios.post('http://localhost:5000/api/upload', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        timeout: 300000, // 5分钟超时
+      const response = await axios.post('/api/upload', formData, {
+        timeout: 600000, // 10分钟超时
       });
-
-      clearInterval(progressInterval);
-      setUploadProgress(100);
-
       if (response.data.success) {
         setResult(response.data);
-        message.success('CT文件上传并分析完成！');
+        message.success('CT文件分析完成！');
       } else {
-        message.error(response.data.error || '分析失败');
+        throw new Error(response.data.error || '分析失败');
       }
     } catch (error) {
       console.error('上传失败:', error);
+      setResult({ error: error.response?.data?.error || error.message || '上传或分析失败，请检查后端服务或文件。' });
       message.error(error.response?.data?.error || '上传失败，请重试');
     } finally {
       setUploading(false);
-      setUploadProgress(0);
+    }
+  };
+
+  const getOverallFindingInfo = (finding) => {
+    switch(finding) {
+      case 'high_risk':
+        return { color: 'red', text: '高风险', icon: <ExclamationCircleOutlined /> };
+      case 'moderate_risk':
+        return { color: 'orange', text: '中等风险', icon: <WarningOutlined /> };
+      case 'low_risk':
+        return { color: 'green', text: '低风险', icon: <CheckCircleOutlined /> };
+      case 'no_nodules_found':
+        return { color: 'blue', text: '未发现结节', icon: <HeartOutlined /> };
+      default:
+        return { color: 'grey', text: '未知或分析不可用', icon: <CloseCircleOutlined /> };
     }
   };
 
@@ -159,51 +123,6 @@ const UploadPage = () => {
     }
   };
 
-  const getMalignancyText = (level) => {
-    switch (level) {
-      case 'high': return '高风险';
-      case 'medium': return '中等风险';
-      case 'low': return '低风险';
-      default: return '未知';
-    }
-  };
-
-  // 解析混淆矩阵字符串，返回统计量
-  function parseConfusionMatrix(matrixStr) {
-    if (!matrixStr) return {
-      totalCandidates: 0,
-      detectedNodules: 0,
-      malignantNodules: 0,
-      benignNodules: 0
-    };
-    // 按行分割
-    const lines = matrixStr.split('\n').map(l => l.trim()).filter(l => l);
-    // 只保留有数字的行
-    const dataLines = lines.filter(line => /\d/.test(line));
-    let total = 0, detected = 0, malignant = 0, benign = 0;
-    dataLines.forEach(line => {
-      // 匹配所有数字
-      const nums = line.match(/\d+/g)?.map(Number) || [];
-      // 结构：漏诊 | 排除 | 预测为良性 | 预测为恶性
-      // 行顺序：非结节、良性、恶性
-      if (nums.length === 4) {
-        total += nums.reduce((a, b) => a + b, 0);
-        // 只统计良性、恶性行的预测为良性/恶性
-        if (line.includes('良性') || line.includes('恶性')) {
-          detected += nums[2] + nums[3];
-          benign += nums[2];
-          malignant += nums[3];
-        }
-      }
-    });
-    return {
-      totalCandidates: total,
-      detectedNodules: detected,
-      malignantNodules: malignant,
-      benignNodules: benign
-    };
-  }
-
   const renderResult = () => {
     if (!result) return null;
 
@@ -213,154 +132,101 @@ const UploadPage = () => {
           status="error"
           title="分析失败"
           subTitle={result.error}
-          extra={[
-            <Button type="primary" key="retry" onClick={resetUpload}>
-              重新上传
-            </Button>,
-          ]}
+          extra={<Button type="primary" key="retry" onClick={resetUpload}>重新上传</Button>}
         />
       );
     }
 
-    // 直接使用后端返回的统计量
-    const totalCandidates = result.total_candidates;
-    const detectedNodules = result.nodules_found;
-    const malignancyRate = (typeof result.malignancy_rate === 'number') ? (result.malignancy_rate * 100) : 0;
-    const diagnosisConfidence = (typeof result.diagnosis_confidence === 'number') ? (result.diagnosis_confidence * 100) : 0;
+    const { summary, nodules, support_info } = result;
+    const overallInfo = getOverallFindingInfo(summary.overall_finding);
 
     return (
       <div>
-        <Row gutter={[16, 16]} style={{ marginBottom: '16px' }}>
-          <Col span={24}>
-            <Title level={3} style={{ margin: 0 }}>
-              📊 分析结果
-            </Title>
-          </Col>
-        </Row>
-        
-        <Row gutter={[16, 16]}>
-          <Col span={24}>
-            <Card title="分析结果概览">
-              <Row gutter={[16, 16]}>
-                <Col span={8}>
-                  <Card size="small">
-                    <div style={{ textAlign: 'center' }}>
-                      <FileImageOutlined style={{ fontSize: 24, color: '#1890ff' }} />
-                      <div style={{ marginTop: 8 }}>
-                        <div>候选区域</div>
-                        <div style={{ fontSize: 20, fontWeight: 'bold' }}>
-                          {totalCandidates}
-                        </div>
-                      </div>
-                    </div>
-                  </Card>
-                </Col>
-                <Col span={8}>
-                  <Card size="small">
-                    <div style={{ textAlign: 'center' }}>
-                      <CheckCircleOutlined style={{ fontSize: 24, color: '#52c41a' }} />
-                      <div style={{ marginTop: 8 }}>
-                        <div>检测到结节</div>
-                        <div style={{ fontSize: 20, fontWeight: 'bold' }}>
-                          {detectedNodules}
-                        </div>
-                      </div>
-                    </div>
-                  </Card>
-                </Col>
-                <Col span={8}>
-                  <Card size="small">
-                    <div style={{ textAlign: 'center' }}>
-                      <ExclamationCircleOutlined style={{ fontSize: 24, color: '#cf1322' }} />
-                      <div style={{ marginTop: 8 }}>
-                        <div>恶性概率</div>
-                        <div style={{ fontSize: 20, fontWeight: 'bold' }}>
-                          {malignancyRate.toFixed(1)}%
-                        </div>
-                      </div>
-                    </div>
-                  </Card>
-                </Col>
-              </Row>
-            </Card>
-          </Col>
-        </Row>
+        <Result
+          icon={overallInfo.icon}
+          status={overallInfo.color === 'red' ? 'error' : (overallInfo.color === 'orange' ? 'warning' : 'success')}
+          title={`分析完成：${overallInfo.text}`}
+          subTitle={`文件名: ${result.filename} | 分析时间: ${new Date(result.timestamp).toLocaleString()}`}
+          extra={<Button type="primary" onClick={resetUpload}>分析新图像</Button>}
+        />
 
-        <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-          <Col span={24}>
-            <Card title="详细分析结果">
-              <Descriptions bordered column={2}>
-                <Descriptions.Item label="文件名">
-                  {result.filename}
+        <Row gutter={[16, 16]}>
+          <Col xs={24} md={12}>
+            <Card title="分析摘要" style={{ marginBottom: 16 }}>
+              <Descriptions bordered column={1}>
+                <Descriptions.Item label="总体发现">
+                  <Tag color={overallInfo.color}>{overallInfo.text}</Tag>
                 </Descriptions.Item>
-                <Descriptions.Item label="分析时间">
-                  {new Date(result.timestamp).toLocaleString()}
+                <Descriptions.Item label="检测到结节数量">
+                  {summary.nodule_count}
                 </Descriptions.Item>
-                <Descriptions.Item label="分割置信度">
-                  {typeof result.segmentation_confidence === 'number'
-                    ? (result.segmentation_confidence * 100).toFixed(1) + '%'
-                    : '-'}
+                <Descriptions.Item label="候选区域总数">
+                  {support_info.total_candidates}
                 </Descriptions.Item>
-                <Descriptions.Item label="是否为结节">
-                  <Tag color={detectedNodules > 0 ? 'green' : 'red'}>
-                    {detectedNodules > 0 ? '是' : '否'}
-                  </Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label="诊断结果">
-                  <Tag color={malignancyRate >= 70 ? 'red' : malignancyRate >= 30 ? 'orange' : 'green'}>
-                    {malignancyRate >= 70 ? '高风险' : malignancyRate >= 30 ? '中等风险' : '低风险'}
-                  </Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label="诊断置信度">
-                  <Tag color={diagnosisConfidence >= 70 ? 'red' : diagnosisConfidence >= 30 ? 'orange' : 'green'}>
-                    {diagnosisConfidence.toFixed(1)}%
+                <Descriptions.Item label="恶性分析">
+                  <Tag color={support_info.malignancy_analysis_available ? 'green' : 'red'}>
+                    {support_info.malignancy_analysis_available ? '可用' : '不可用'}
                   </Tag>
                 </Descriptions.Item>
               </Descriptions>
             </Card>
-          </Col>
-        </Row>
 
-        <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-          <Col span={24}>
-            <Card title="医疗建议">
+            <Card title="最可疑结节详情">
+              {summary.most_concerning_nodule ? (
+                <Descriptions bordered column={1}>
+                  <Descriptions.Item label="结节ID">{summary.most_concerning_nodule.id}</Descriptions.Item>
+                  <Descriptions.Item label="结节可能性">
+                    <Progress percent={summary.most_concerning_nodule.nodule_probability * 100} size="small" />
+                  </Descriptions.Item>
+                  <Descriptions.Item label="恶性风险等级">
+                    <Tag color={getMalignancyColor(summary.most_concerning_nodule.malignancy_level)}>
+                      {summary.most_concerning_nodule.malignancy_level.toUpperCase()}
+                    </Tag>
+                  </Descriptions.Item>
+                   <Descriptions.Item label="恶性概率">
+                    <Progress percent={(summary.most_concerning_nodule.malignancy_probability || 0) * 100} size="small" status="exception" />
+                  </Descriptions.Item>
+                </Descriptions>
+              ) : (
+                <Empty description="未发现可疑结节" />
+              )}
+            </Card>
+          </Col>
+
+          <Col xs={24} md={12}>
+            <Card title={`结节详细列表 (${summary.nodule_count}个)`}>
               <List
-                dataSource={result.recommendations}
-                renderItem={(rec, index) => (
+                itemLayout="horizontal"
+                dataSource={nodules}
+                locale={{ emptyText: <Empty description="未发现结节" /> }}
+                renderItem={item => (
                   <List.Item>
                     <List.Item.Meta
-                      title={`建议 ${index + 1}`}
+                      avatar={<Avatar style={{ backgroundColor: getMalignancyColor(item.malignancy_level) }} icon={<RadarChartOutlined />} />}
+                      title={`结节 #${item.id}`}
                       description={
-                        <Space direction="vertical" size="small">
-                          <div>
-                            <Text>{rec}</Text>
-                          </div>
+                        <Space direction="vertical" size="small" style={{width: '100%'}}>
+                          <div>结节概率: {(item.nodule_probability * 100).toFixed(2)}%</div>
+                          <div>恶性概率: {item.malignancy_probability !== null ? `${(item.malignancy_probability * 100).toFixed(4)}%` : 'N/A'}</div>
                         </Space>
                       }
                     />
+                     <Tag color={getMalignancyColor(item.malignancy_level)}>{item.malignancy_level.toUpperCase()}</Tag>
                   </List.Item>
                 )}
               />
             </Card>
           </Col>
         </Row>
-
-        <Row style={{ marginTop: 16 }}>
-          <Col span={24}>
-            <Button type="primary" onClick={resetUpload}>
-              分析新图像
-            </Button>
-          </Col>
-        </Row>
       </div>
     );
   };
 
+
   return (
     <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
       <Title level={2}>CT文件上传与分析</Title>
-      
-      {/* 上传区域 - 只在没有结果时显示 */}
+
       {!result && (
         <>
           <Alert
@@ -371,63 +237,78 @@ const UploadPage = () => {
             style={{ marginBottom: '24px' }}
           />
 
-          <Card title="选择CT文件" style={{ marginBottom: '24px' }}>
-            <Space direction="vertical" size="large" style={{ width: '100%' }}>
-              <div>
-                <Text strong>1. 选择.mhd文件（元数据）：</Text>
-                <Upload
-                  accept=".mhd"
-                  beforeUpload={() => false}
-                  onChange={handleMhdFileChange}
-                  showUploadList={true}
-                  maxCount={1}
-                >
-                  <Button icon={<UploadOutlined />}>选择.mhd文件</Button>
-                </Upload>
-              </div>
+          {/* 修复：为上传区域容器设置最小高度 */}
+          <div style={{ minHeight: '160px', marginBottom: '24px' }}>
+            <Row gutter={16}>
+                <Col span={12}>
+                  <Upload.Dragger
+                      accept=".mhd"
+                      beforeUpload={() => false}
+                      onChange={handleMhdFileChange}
+                      maxCount={1}
+                      fileList={mhdFile ? [mhdFile] : []}
+                  >
+                      <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+                      <p className="ant-upload-text">点击或拖拽 .mhd 文件到此区域</p>
+                      <p className="ant-upload-hint">元数据文件</p>
+                  </Upload.Dragger>
+                </Col>
+                <Col span={12}>
+                  <Upload.Dragger
+                      accept=".raw"
+                      beforeUpload={() => false}
+                      onChange={handleRawFileChange}
+                      maxCount={1}
+                      fileList={rawFile ? [rawFile] : []}
+                  >
+                      <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+                      <p className="ant-upload-text">点击或拖拽 .raw 文件到此区域</p>
+                      <p className="ant-upload-hint">体素数据文件</p>
+                  </Upload.Dragger>
+                </Col>
+            </Row>
+          </div>
 
-              <div>
-                <Text strong>2. 选择.raw文件（体素数据）：</Text>
-                <Upload
-                  accept=".raw"
-                  beforeUpload={() => false}
-                  onChange={handleRawFileChange}
-                  showUploadList={true}
-                  maxCount={1}
-                >
-                  <Button icon={<UploadOutlined />}>选择.raw文件</Button>
-                </Upload>
-              </div>
-
-              <Button
+          <div style={{textAlign: 'center', marginTop: '48px'}}>
+            <Button
                 type="primary"
                 size="large"
                 onClick={handleUpload}
                 loading={uploading}
                 disabled={!mhdFile || !rawFile}
-                icon={<FileTextOutlined />}
-                style={{ marginTop: '16px' }}
-              >
-                开始分析
-              </Button>
-            </Space>
-          </Card>
+                icon={<UploadOutlined/>}
+            >
+              {uploading ? '正在分析中...' : '开始分析'}
+            </Button>
+          </div>
 
           {uploading && (
-            <Card title="分析进度" style={{ marginBottom: '24px' }}>
-              <Progress percent={uploadProgress} status="active" />
-              <Text type="secondary">
-                正在处理CT数据，包括分割、候选区域提取和分类分析...
-              </Text>
-            </Card>
+              <div style={{marginTop: '24px'}}>
+                 <Spin spinning={true} size="large">
+                    <Alert
+                        message="分析进行中，请勿关闭页面"
+                        description={
+                            <div>
+                                <p>AI模型正在进行三阶段分析，这可能需要几分钟时间。</p>
+                                <ol>
+                                    <li><strong>图像分割</strong>: 识别CT图像中的结节候选区域。</li>
+                                    <li><strong>候选提取</strong>: 从分割结果中提取独立的候选结节。</li>
+                                    <li><strong>分类评估</strong>: 判断每个结节的可能性及其恶性风险。</li>
+                                </ol>
+                            </div>
+                        }
+                        type="info"
+                        showIcon
+                    />
+                 </Spin>
+             </div>
           )}
         </>
       )}
 
-      {/* 结果展示区域 - 只在有结果时显示 */}
       {result && renderResult()}
     </div>
   );
 };
 
-export default UploadPage; 
+export default UploadPage;

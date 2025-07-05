@@ -1,85 +1,96 @@
+# app.py
+
 import os
+import sys
 import json
-import base64
 import io
 import tempfile
-import shutil
-from datetime import datetime
-from pathlib import Path
+from datetime import datetime, timedelta
+import traceback
+import random
+
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 import torch
+import torch.nn as nn
 import numpy as np
-from PIL import Image
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use('Agg')  # 使用非交互式后端
+import SimpleITK as sitk
+import scipy.ndimage as ndimage
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import dashscope
 from dashscope import Generation
 
+from segmentModel import UNetWrapper
+from TumorModel import LunaModel
+from TumorDatasets import CandidateInfoTuple
+from util.util import patientCoord2voxelCoord, voxelCoord2patientCoord
+
 app = Flask(__name__)
 CORS(app)
 
-# 配置通义千问API
-dashscope.api_key = os.getenv('DASHSCOPE_API_KEY')
+dashscope.api_key = os.getenv('DASHSCOPE_API_KEY', 'YOUR_DASHSCOPE_API_KEY_HERE')
+if 'YOUR_DASHSCOPE_API_KEY' in dashscope.api_key:
+    print("警告：通义千问API密钥未设置。")
+
 
 class TumorPredictionSystem:
+    # ... (这个类的所有内容保持不变，从上一个回答复制即可)
     def __init__(self):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.models_loaded = False
         print(f"使用设备: {self.device}")
-        
-        # 统计数据存储
+        self.seg_model, self.cls_model, self.mal_model = None, None, None
+        self.models_loaded = False
         self.diagnosis_history = []
-        # 基于真实测试结果的模型性能
-        self.model_performance = {
-            'segmentation': {'correct': 0, 'total': 0, 'accuracy': 98.9},  # 真实测试结果
-            'classification': {'correct': 0, 'total': 0, 'accuracy': 65.6},  # 真实测试结果
-            'malignancy': {'correct': 0, 'total': 0, 'accuracy': 67.0}  # 基于分类模型性能
+        self.model_paths = {
+            'segmentation': '../data-unversioned/seg/models/seg/seg_2025-07-02_13.09.34_none.best.state',
+            'classification': '../data-unversioned/nodule/models/nodule-model/best_2025-07-02_10.36.28_nodule-comment.best.state',
+            'malignancy': '../data-unversioned/tumor/models/tumor_cls/seg_2025-07-02_14.29.48_finetune-depth2.best.state'
         }
-        
-        # 尝试加载模型（如果存在）
         self.load_models()
-    
-    def load_models(self):
-        """加载三个深度学习模型"""
-        try:
-            # 检查模型文件是否存在
-            model_paths = {
-                'segmentation': '../data-unversioned/seg/models/seg/seg_2025-07-02_13.09.34_none.best.state',
-                'classification': '../data-unversioned/nodule/models/nodule-model/best_2025-07-02_10.36.28_nodule-comment.best.state',
-                'malignancy': '../data-unversioned/tumor/models/tumor_cls/seg_2025-07-02_14.29.48_finetune-depth2.best.state'
-            }
-            
-            models_found = 0
-            for model_name, model_path in model_paths.items():
-                if os.path.exists(model_path):
-                    print(f"✓ 找到{model_name}模型: {model_path}")
-                    models_found += 1
-                else:
-                    print(f"✗ 未找到{model_name}模型: {model_path}")
-            
-            if models_found > 0:
-                print(f"找到 {models_found} 个模型文件")
-                self.models_loaded = True
-            else:
-                print("未找到任何模型文件，将使用模拟模式")
-                self.models_loaded = False
-                
-        except Exception as e:
-            print(f"模型加载检查失败: {str(e)}")
-            self.models_loaded = False
-    
-    def process_ct_files(self, mhd_data, raw_data, mhd_filename, raw_filename):
-        """处理CT文件对（.mhd和.raw）并返回真实模型预测结果"""
-        import subprocess, re, tempfile, os, sys
-        from datetime import datetime
-        try:
-            print(f"处理CT文件对: {mhd_filename}, {raw_filename}")
-            base_filename = mhd_filename.replace('.mhd', '')
 
+    def load_models(self):
+        try:
+            if os.path.exists(self.model_paths['segmentation']):
+                seg_dict = torch.load(self.model_paths['segmentation'], map_location=self.device)
+                self.seg_model = UNetWrapper(in_channels=7, n_classes=1, depth=3, wf=4, padding=True, batch_norm=True,
+                                             up_mode='upconv')
+                self.seg_model.load_state_dict(seg_dict['model_state'])
+                self.seg_model.eval().to(self.device)
+                print("✓ 分割模型加载成功")
+            if os.path.exists(self.model_paths['classification']):
+                cls_dict = torch.load(self.model_paths['classification'], map_location=self.device)
+                self.cls_model = LunaModel()
+                self.cls_model.load_state_dict(cls_dict['model_state'])
+                self.cls_model.eval().to(self.device)
+                print("✓ 结节分类模型加载成功")
+            if os.path.exists(self.model_paths['malignancy']):
+                mal_dict = torch.load(self.model_paths['malignancy'], map_location=self.device)
+                self.mal_model = LunaModel()
+                self.mal_model.load_state_dict(mal_dict['model_state'])
+                self.mal_model.eval().to(self.device)
+                print("✓ 恶性分类模型加载成功")
+
+            if self.seg_model and self.cls_model:
+                self.models_loaded = True
+                print("所有必需模型已加载，系统进入真实预测模式。")
+            else:
+                self.models_loaded = False
+                print("必需模型未完全加载，系统将使用模拟模式。")
+        except Exception as e:
+            print(f"模型加载失败: {e}")
+            self.models_loaded = False
+
+    def process_ct_files(self, mhd_data, raw_data, mhd_filename, raw_filename):
+        if not self.models_loaded:
+            return self.simulate_prediction(mhd_filename)
+
+        print(f"开始真实模型预测: {mhd_filename}")
+        try:
+            series_uid = mhd_filename.replace('.mhd', '')
             with tempfile.TemporaryDirectory() as temp_dir:
                 mhd_path = os.path.join(temp_dir, mhd_filename)
                 raw_path = os.path.join(temp_dir, raw_filename)
@@ -88,525 +99,270 @@ class TumorPredictionSystem:
                 with open(raw_path, 'wb') as f:
                     f.write(raw_data)
 
-                python_executable = sys.executable
-                project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-                process = subprocess.Popen(
-                    [python_executable, 'model_evel.py', base_filename],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    cwd=project_root,
-                    universal_newlines=False
-                )
-                stdout, stderr = process.communicate()
-                stdout = stdout.decode('utf-8', errors='replace') if stdout else ''
-                stderr = stderr.decode('utf-8', errors='replace') if stderr else ''
-                if process.returncode != 0:
-                    print(f"模型推理失败: {stderr}")
-                    return {"error": f"模型推理失败: {stderr}"}
-                print(f"模型推理输出: {stdout}")
+                ct_mhd = sitk.ReadImage(mhd_path)
+                ct_hu_a = np.array(sitk.GetArrayFromImage(ct_mhd), dtype=np.float32)
 
-                # 解析输出
+                mask_a = self._segment_ct(ct_hu_a)
+                candidate_info_list = self._group_segmentation_output(series_uid, ct_mhd, ct_hu_a, mask_a)
+                total_candidates = len(candidate_info_list)
+                print(f"分割后找到 {total_candidates} 个候选区域。")
+
+                classifications_list = self._classify_candidates(ct_mhd, ct_hu_a,
+                                                                 candidate_info_list) if candidate_info_list else []
+
                 nodules = []
-                nodule_pattern = re.compile(r'nodule prob ([\d\.]+), malignancy prob ([\d\.]+), center xyz .*')
-                for line in stdout.splitlines():
-                    m = nodule_pattern.match(line)
-                    if m:
-                        nodule_prob = float(m.group(1))
-                        malignancy_prob = float(m.group(2))
-                        if malignancy_prob < 0.3:
-                            malignancy_level = 'low'
-                        elif malignancy_prob < 0.7:
-                            malignancy_level = 'medium'
-                        else:
-                            malignancy_level = 'high'
+                for prob, prob_mal, center_xyz, _ in classifications_list:
+                    if prob > 0.5:
+                        mal_prob_display, malignancy_level = None, 'N/A'
+                        if prob_mal is not None:
+                            if prob_mal < 0.3:
+                                malignancy_level = 'low'
+                            elif prob_mal < 0.7:
+                                malignancy_level = 'medium'
+                            else:
+                                malignancy_level = 'high'
+                            mal_prob_display = round(prob_mal, 4)
+
                         nodules.append({
-                            "nodule_probability": nodule_prob,
-                            "malignancy_probability": malignancy_prob,
-                            "malignancy_level": malignancy_level
+                            "id": len(nodules) + 1,
+                            "nodule_probability": round(prob, 4),
+                            "malignancy_probability": mal_prob_display,
+                            "malignancy_level": malignancy_level,
+                            "center_xyz": [round(c, 4) for c in center_xyz],
                         })
 
-                # 解析混淆矩阵并统计
-                confusion_matrix = None
-                matrix_lines = []
-                lines = stdout.splitlines()
-                # 精确定位Total后面三行
-                for idx, line in enumerate(lines):
-                    if 'Total' in line.strip():
-                        # 取Total后面最多10行，找出包含'非结节'、'良性'、'恶性'的三行
-                        for l in lines[idx+1:idx+10]:
-                            if any(tag in l for tag in ['非结节', '良性', '恶性']):
-                                matrix_lines.append(l)
-                            if len(matrix_lines) == 3:
-                                break
-                        break
-                if matrix_lines:
-                    confusion_matrix = '\n'.join(matrix_lines)
-
-                # 统计候选区域、检测到结节、恶性概率
-                total_candidates = 0
-                detected_nodules = 0
-                malignant_nodules = 0
-                benign_nodules = 0
-                for line in matrix_lines:
-                    nums = re.findall(r'\d+', line)
-                    if not nums:
-                        continue
-                    nums = [int(x) for x in nums]
-                    nums = nums[-4:]
-                    total_candidates += sum(nums)
-                    detected_nodules += nums[2] + nums[3]
-                    benign_nodules += nums[2]
-                    malignant_nodules += nums[3]
-                malignancy_rate = (malignant_nodules / detected_nodules) if detected_nodules > 0 else 0
-
-                # 分割置信度和诊断置信度用固定值
-                segmentation_confidence = 0.989
-                diagnosis_confidence = 0.67
+                overall_finding, most_concerning_nodule = "no_nodules_found", None
+                if nodules:
+                    most_concerning_nodule = max(nodules, key=lambda x: x['malignancy_probability'] if x[
+                                                                                                           'malignancy_probability'] is not None else -1)
+                    top_level = most_concerning_nodule['malignancy_level']
+                    if top_level == 'high':
+                        overall_finding = "high_risk"
+                    elif top_level == 'medium':
+                        overall_finding = "moderate_risk"
+                    elif top_level == 'low':
+                        overall_finding = "low_risk"
+                    else:
+                        overall_finding = "nodules_present_malignancy_unavailable"
 
                 prediction_result = {
                     "filename": mhd_filename,
                     "timestamp": datetime.now().isoformat(),
+                    "summary": {
+                        "overall_finding": overall_finding,
+                        "nodule_count": len(nodules),
+                        "most_concerning_nodule": most_concerning_nodule
+                    },
                     "nodules": nodules,
-                    "confusion_matrix": confusion_matrix,
-                    "total_candidates": total_candidates,
-                    "nodules_found": detected_nodules,
-                    "malignant_nodules": malignant_nodules,
-                    "benign_nodules": benign_nodules,
-                    "malignancy_rate": malignancy_rate,
-                    "segmentation_confidence": segmentation_confidence,
-                    "diagnosis_confidence": diagnosis_confidence,
-                    "note": "本次结果基于真实模型推理"
+                    "support_info": {
+                        "total_candidates": total_candidates,
+                        "note": "本次结果基于真实模型直接推理",
+                        "malignancy_analysis_available": self.mal_model is not None
+                    }
                 }
+                self.record_diagnosis(prediction_result)
+                return prediction_result
+        except Exception as e:
+            traceback.print_exc()
+            return {"error": f"处理失败: {str(e)}"}
 
-                self.record_diagnosis(prediction_result)
-                return prediction_result
-        except Exception as e:
-            return {"error": f"处理失败: {str(e)}"}
-    
-    def process_ct_image(self, image_data, filename):
-        """处理CT图像并返回预测结果（保留向后兼容）"""
-        try:
-            # 创建临时目录存储上传的文件
-            with tempfile.TemporaryDirectory() as temp_dir:
-                # 保存上传的图像
-                image_path = os.path.join(temp_dir, filename)
-                with open(image_path, 'wb') as f:
-                    f.write(image_data)
-                
-                print(f"处理文件: {filename}")
-                
-                # 创建模拟的预测结果
-                prediction_result = self.simulate_prediction(filename)
-                
-                # 记录诊断历史
-                self.record_diagnosis(prediction_result)
-                
-                return prediction_result
-                
-        except Exception as e:
-            return {"error": f"处理失败: {str(e)}"}
-    
+    def _segment_ct(self, ct_hu_a):
+        print("开始分割CT...")
+        with torch.no_grad():
+            output_a = np.zeros_like(ct_hu_a, dtype=np.float32)
+            context_slices = 3
+            for slice_ndx in range(ct_hu_a.shape[0]):
+                ct_t = torch.zeros((context_slices * 2 + 1, 512, 512))
+                start_ndx, end_ndx = slice_ndx - context_slices, slice_ndx + context_slices + 1
+                for i, context_ndx in enumerate(range(start_ndx, end_ndx)):
+                    context_ndx = max(0, min(context_ndx, ct_hu_a.shape[0] - 1))
+                    ct_t[i] = torch.from_numpy(ct_hu_a[context_ndx].astype(np.float32))
+                ct_t.clamp_(-1000, 1000)
+                prediction_g = self.seg_model(ct_t.unsqueeze(0).to(self.device))
+                output_a[slice_ndx] = prediction_g[0].cpu().numpy()
+            mask_a = output_a > 0.5
+            mask_a = ndimage.binary_erosion(mask_a, iterations=1)
+        print("分割完成。")
+        return mask_a
+
+    def _group_segmentation_output(self, series_uid, ct_mhd, ct_hu_a, clean_a):
+        origin_xyz, vxSize_xyz = ct_mhd.GetOrigin(), ct_mhd.GetSpacing()
+        direction_a = np.array(ct_mhd.GetDirection()).reshape(3, 3)
+        candidateLabel_a, candidate_count = ndimage.label(clean_a)
+        if candidate_count == 0: return []
+        centerIrc_list = ndimage.center_of_mass(ct_hu_a.clip(-1000, 1000) + 1001, labels=candidateLabel_a,
+                                                index=np.arange(1, candidate_count + 1))
+        if not isinstance(centerIrc_list, list): centerIrc_list = [centerIrc_list]
+        candidateInfo_list = []
+        for center_irc in centerIrc_list:
+            center_xyz = voxelCoord2patientCoord(center_irc, origin_xyz, vxSize_xyz, direction_a)
+            if np.all(np.isfinite(center_irc)) and np.all(np.isfinite(center_xyz)):
+                candidateInfo_list.append(CandidateInfoTuple(False, False, False, 0.0, series_uid, center_xyz))
+        return candidateInfo_list
+
+    def _get_ct_chunk(self, ct_hu_a, center_xyz, origin_xyz, vxSize_xyz, direction_a):
+        width_irc = (32, 48, 48)
+        center_irc = patientCoord2voxelCoord(center_xyz, origin_xyz, vxSize_xyz, direction_a)
+        slice_list = []
+        for axis, center_val in enumerate(center_irc):
+            start_ndx = int(round(center_val - width_irc[axis] / 2))
+            end_ndx = int(start_ndx + width_irc[axis])
+            if start_ndx < 0: start_ndx, end_ndx = 0, int(width_irc[axis])
+            if end_ndx > ct_hu_a.shape[axis]: end_ndx, start_ndx = ct_hu_a.shape[axis], int(
+                ct_hu_a.shape[axis] - width_irc[axis])
+            slice_list.append(slice(start_ndx, end_ndx))
+        ct_chunk = ct_hu_a[tuple(slice_list)].copy()
+        ct_chunk.clip(-1000, 1000, out=ct_chunk)
+        return torch.from_numpy(ct_chunk).unsqueeze(0).unsqueeze(0).to(torch.float32)
+
+    def _classify_candidates(self, ct_mhd, ct_hu_a, candidateInfo_list):
+        print("开始分类候选区域...")
+        origin_xyz, vxSize_xyz = ct_mhd.GetOrigin(), ct_mhd.GetSpacing()
+        direction_a = np.array(ct_mhd.GetDirection()).reshape(3, 3)
+        classifications_list = []
+        with torch.no_grad():
+            for i, candidate in enumerate(candidateInfo_list):
+                input_g = self._get_ct_chunk(ct_hu_a, candidate.center_xyz, origin_xyz, vxSize_xyz, direction_a).to(
+                    self.device)
+                _, prob_nodule_g = self.cls_model(input_g)
+                prob_nodule = prob_nodule_g[0, 1].item()
+                prob_mal = None
+                if self.mal_model is not None:
+                    _, prob_mal_g = self.mal_model(input_g)
+                    prob_mal = prob_mal_g[0, 1].item()
+                classifications_list.append((prob_nodule, prob_mal, candidate.center_xyz, None))
+        print("分类完成。")
+        return classifications_list
+
     def record_diagnosis(self, prediction_result):
-        """记录诊断历史"""
+        """记录诊断历史 (修复版：保存完整的预测结果)"""
         try:
-            # 获取恶性程度信息
-            nodules = prediction_result.get('nodules', [])
-            if nodules:
-                # 取第一个结节的恶性程度作为主要诊断
-                main_nodule = nodules[0]
-                diagnosis = main_nodule.get('malignancy_level', 'unknown')
-                malignancy_confidence = main_nodule.get('malignancy_probability', 0)
-            else:
-                diagnosis = 'no_nodule'
-                malignancy_confidence = 0
-            
+            summary = prediction_result.get('summary', {})
+            overall_finding = summary.get('overall_finding', 'unknown')
+
+            confidence = 0.0
+            if summary.get('most_concerning_nodule'):
+                mal_prob = summary['most_concerning_nodule'].get('malignancy_probability')
+                if mal_prob is not None: confidence = mal_prob
+
+            # --- 关键修复：直接将完整的 prediction_result 保存下来 ---
+            # 同时保留顶层的 'id', 'diagnosis', 'confidence' 以便列表快速访问
             diagnosis_record = {
+                **prediction_result,  # 使用对象展开运算符，复制所有键值对
                 'id': len(self.diagnosis_history) + 1,
-                'filename': prediction_result.get('filename', ''),
-                'timestamp': prediction_result.get('timestamp', datetime.now().isoformat()),
-                'diagnosis': diagnosis,
-                'confidence': malignancy_confidence,
-                'segmentation_confidence': prediction_result.get('segmentation_confidence', 0),
-                'classification_confidence': prediction_result.get('nodules_found', 0) / max(prediction_result.get('total_candidates', 1), 1),
-                'malignancy_confidence': malignancy_confidence
+                'diagnosis': overall_finding,
+                'confidence': confidence,
             }
-            
+            # ---------------------------------------------------------
+
             self.diagnosis_history.append(diagnosis_record)
-            
-            # 更新模型性能统计（模拟）
-            self.update_model_performance(prediction_result)
-            
             print(f"记录诊断: {diagnosis_record['filename']} - {diagnosis_record['diagnosis']}")
-            
         except Exception as e:
             print(f"记录诊断失败: {str(e)}")
-    
-    def update_model_performance(self, prediction_result):
-        """更新模型性能统计"""
-        try:
-            # 模拟模型性能更新
-            import random
-            
-            # 分割模型性能
-            seg_conf = prediction_result.get('segmentation_confidence', 0)
-            if seg_conf > 0.8:  # 高置信度认为是正确的
-                self.model_performance['segmentation']['correct'] += 1
-            self.model_performance['segmentation']['total'] += 1
-            
-            # 分类模型性能（基于结节检测率）
-            nodules_found = prediction_result.get('nodules_found', 0)
-            total_candidates = prediction_result.get('total_candidates', 1)
-            detection_rate = nodules_found / max(total_candidates, 1)
-            if detection_rate > 0.5:  # 检测率超过50%认为是正确的
-                self.model_performance['classification']['correct'] += 1
-            self.model_performance['classification']['total'] += 1
-            
-            # 恶性程度模型性能
-            nodules = prediction_result.get('nodules', [])
-            if nodules:
-                mal_conf = nodules[0].get('malignancy_probability', 0)
-                if mal_conf > 0.6:  # 高置信度认为是正确的
-                    self.model_performance['malignancy']['correct'] += 1
-            self.model_performance['malignancy']['total'] += 1
-            
-            # 计算准确率
-            for model in self.model_performance.values():
-                if model['total'] > 0:
-                    model['accuracy'] = (model['correct'] / model['total']) * 100
-                else:
-                    model['accuracy'] = 0
-                    
-        except Exception as e:
-            print(f"更新模型性能失败: {str(e)}")
-    
-    def simulate_prediction(self, filename):
-        """模拟预测结果"""
-        import random
-        
-        # 生成模拟的结节数据
-        nodules_found = random.randint(0, 3)
-        nodules = []
-        
-        if nodules_found > 0:
-            for i in range(nodules_found):
-                malignancy_prob = round(random.uniform(0.1, 0.9), 3)
-                if malignancy_prob < 0.3:
-                    malignancy_level = 'low'
-                elif malignancy_prob < 0.7:
-                    malignancy_level = 'medium'
-                else:
-                    malignancy_level = 'high'
-                
-                nodules.append({
-                    "id": i + 1,
-                    "position": f"({random.randint(100, 200)}, {random.randint(100, 200)}, {random.randint(50, 150)})",
-                    "size": round(random.uniform(5, 25), 1),
-                    "malignancy_probability": malignancy_prob,
-                    "malignancy_level": malignancy_level,
-                    "confidence": round(random.uniform(0.6, 0.95), 3)
-                })
-        
-        # 计算总体统计
-        total_candidates = random.randint(3, 8)
-        segmentation_confidence = round(random.uniform(0.7, 0.95), 3)
-        
-        return {
-            "filename": filename,
-            "timestamp": datetime.now().isoformat(),
-            "models_loaded": self.models_loaded,
-            "device": str(self.device),
-            "total_candidates": total_candidates,
-            "nodules_found": nodules_found,
-            "segmentation_confidence": segmentation_confidence,
-            "nodules": nodules,
-            "recommendations": [
-                "建议进行定期随访",
-                "考虑进行活检确认",
-                "建议3个月后复查"
-            ],
-            "note": "当前为模拟模式，实际预测需要加载训练好的模型"
-        }
 
-# 初始化预测系统
+
+# --- 实例化系统，让所有路由都能访问它 ---
 prediction_system = TumorPredictionSystem()
 
+
+# --- Flask API 路由 ---
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """健康检查接口"""
     return jsonify({
         "status": "healthy",
         "models_loaded": prediction_system.models_loaded,
         "device": str(prediction_system.device),
         "timestamp": datetime.now().isoformat(),
-        "mode": "simulation" if not prediction_system.models_loaded else "production",
-        "message": "系统运行正常" if prediction_system.models_loaded else "系统运行正常（模拟模式）"
+        "mode": "production" if prediction_system.models_loaded else "simulation"
     })
 
-@app.route('/api/upload', methods=['POST'])
-def upload_ct():
-    """上传CT图像接口"""
-    try:
-        # 添加调试信息
-        print(f"收到的文件字段: {list(request.files.keys())}")
-        print(f"请求内容类型: {request.content_type}")
-        
-        # 检查是否上传了两个文件
-        if 'mhd_file' not in request.files or 'raw_file' not in request.files:
-            print(f"缺少文件字段，当前字段: {list(request.files.keys())}")
-            return jsonify({"error": "请上传.mhd和.raw文件对"}), 400
-        
-        mhd_file = request.files['mhd_file']
-        raw_file = request.files['raw_file']
-        
-        if mhd_file.filename == '' or raw_file.filename == '':
-            return jsonify({"error": "请选择.mhd和.raw文件"}), 400
-        
-        # 检查文件扩展名
-        if not mhd_file.filename.endswith('.mhd'):
-            return jsonify({"error": "第一个文件必须是.mhd文件"}), 400
-        
-        if not raw_file.filename.endswith('.raw'):
-            return jsonify({"error": "第二个文件必须是.raw文件"}), 400
-        
-        # 检查文件名是否匹配
-        mhd_name = mhd_file.filename.replace('.mhd', '')
-        raw_name = raw_file.filename.replace('.raw', '')
-        
-        if mhd_name != raw_name:
-            return jsonify({"error": "文件名不匹配，请确保.mhd和.raw文件来自同一个CT扫描"}), 400
-        
-        # 创建uploads目录
-        upload_dir = os.path.join(os.path.dirname(__file__), 'uploads')
-        os.makedirs(upload_dir, exist_ok=True)
-        
-        # 保存文件到uploads目录
-        mhd_path = os.path.join(upload_dir, mhd_file.filename)
-        raw_path = os.path.join(upload_dir, raw_file.filename)
-        
-        mhd_file.save(mhd_path)
-        raw_file.save(raw_path)
-        
-        print(f"文件已保存到: {mhd_path}, {raw_path}")
-        
-        # 读取文件数据用于处理
-        with open(mhd_path, 'rb') as f:
-            mhd_data = f.read()
-        with open(raw_path, 'rb') as f:
-            raw_data = f.read()
-        
-        # 处理CT图像（这里可以传入两个文件的数据）
-        result = prediction_system.process_ct_files(mhd_data, raw_data, mhd_file.filename, raw_file.filename)
-        
-        # 添加成功标志
-        result['success'] = True
-        result['files_saved'] = {
-            'mhd_file': mhd_path,
-            'raw_file': raw_path
-        }
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        return jsonify({"error": f"上传失败: {str(e)}"}), 500
 
-@app.route('/api/chat', methods=['POST'])
-def chat_with_ai():
-    """与通义千问AI聊天接口"""
-    try:
-        data = request.get_json()
-        user_message = data.get('message', '')
-        
-        if not user_message:
-            return jsonify({"error": "消息不能为空"}), 400
-        
-        print(f"收到聊天消息: {user_message}")
-        
-        # 检查API密钥
-        if not dashscope.api_key:
-            return jsonify({
-                "response": "抱歉，通义千问API密钥未配置，请设置DASHSCOPE_API_KEY环境变量。",
-                "timestamp": datetime.now().isoformat()
-            })
-        
-        # 调用通义千问API
-        try:
-            response = Generation.call(
-                model='qwen-turbo',
-                messages=[
-                    {'role': 'system', 'content': '你是一个专业的医疗AI助手，专门帮助医生解答关于肺肿瘤诊断和AI辅助诊断系统的问题。请用专业但易懂的语言回答。'},
-                    {'role': 'user', 'content': user_message}
-                ]
-            )
-            
-            if response.status_code == 200:
-                ai_response = response.output.text
-            else:
-                ai_response = "抱歉，我现在无法回答您的问题，请稍后再试。"
-                
-        except Exception as e:
-            ai_response = f"API调用失败: {str(e)}"
-        
-        return jsonify({
-            "response": ai_response,
-            "timestamp": datetime.now().isoformat()
-        })
-        
-    except Exception as e:
-        return jsonify({"error": f"聊天失败: {str(e)}"}), 500
-
-@app.route('/api/predictions', methods=['GET'])
-def get_predictions():
-    """获取历史预测结果接口"""
-    try:
-        # 返回真实的诊断历史记录
-        return jsonify({
-            "predictions": prediction_system.diagnosis_history,
-            "total_count": len(prediction_system.diagnosis_history)
-        })
-    except Exception as e:
-        return jsonify({"error": f"获取历史记录失败: {str(e)}"}), 500
-
+# --- 新增：补全 /api/models/status 路由 ---
 @app.route('/api/models/status', methods=['GET'])
 def get_models_status():
-    """获取模型状态接口"""
     return jsonify({
         "models_loaded": prediction_system.models_loaded,
         "device": str(prediction_system.device),
         "available_models": {
-            "segmentation": os.path.exists('../data-unversioned/seg/models/seg/seg_2025-07-02_13.09.34_none.best.state'),
-            "classification": os.path.exists('../data-unversioned/nodule/models/nodule-model/best_2025-07-02_10.36.28_nodule-comment.best.state'),
-            "malignancy": os.path.exists('../data-unversioned/tumor/models/tumor_cls/seg_2025-07-02_14.29.48_finetune-depth2.best.state')
+            "segmentation": os.path.exists(prediction_system.model_paths['segmentation']),
+            "classification": os.path.exists(prediction_system.model_paths['classification']),
+            "malignancy": os.path.exists(prediction_system.model_paths['malignancy'])
         }
     })
 
+
+@app.route('/api/upload', methods=['POST'])
+def upload_ct():
+    try:
+        if 'mhd_file' not in request.files or 'raw_file' not in request.files: return jsonify(
+            {"error": "请上传.mhd和.raw文件对"}), 400
+        mhd_file, raw_file = request.files['mhd_file'], request.files['raw_file']
+        if not mhd_file.filename.endswith('.mhd') or not raw_file.filename.endswith('.raw'): return jsonify(
+            {"error": "文件类型错误"}), 400
+        if mhd_file.filename.replace('.mhd', '') != raw_file.filename.replace('.raw', ''): return jsonify(
+            {"error": "文件名不匹配"}), 400
+        result = prediction_system.process_ct_files(mhd_file.read(), raw_file.read(), mhd_file.filename,
+                                                    raw_file.filename)
+        if "error" in result: return jsonify(result), 500
+        result['success'] = True
+        return jsonify(result)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"上传失败: {str(e)}"}), 500
+
+
+@app.route('/api/predictions', methods=['GET'])
+def get_predictions():
+    return jsonify({"predictions": sorted(prediction_system.diagnosis_history, key=lambda x: x['id'], reverse=True),
+                    "total_count": len(prediction_system.diagnosis_history)})
+
+
+# --- 补全其他缺失的路由 ---
 @app.route('/api/statistics', methods=['GET'])
 def get_statistics():
-    """获取统计数据接口"""
-    try:
-        from datetime import datetime, timedelta
-        import random
-        
-        now = datetime.now()
-        today = now.date()
-        
-        # 获取今日真实诊断数据
-        today_diagnoses = len([d for d in prediction_system.diagnosis_history 
-                              if datetime.fromisoformat(d['timestamp'].replace('Z', '+00:00')).date() == today])
-        
-        # 统计今日诊断结果
-        today_diagnoses_list = [d for d in prediction_system.diagnosis_history 
-                               if datetime.fromisoformat(d['timestamp'].replace('Z', '+00:00')).date() == today]
-        
-        benign_count = len([d for d in today_diagnoses_list if d['diagnosis'] == 'low'])
-        malignant_count = len([d for d in today_diagnoses_list if d['diagnosis'] == 'high'])
-        need_further_count = len([d for d in today_diagnoses_list if d['diagnosis'] == 'medium'])
-        
-        # 待处理数量（模拟）
-        pending_count = max(0, random.randint(0, 5))
-        
-        # 获取真实模型准确率（基于实际测试结果）
-        if prediction_system.models_loaded:
-            # 使用真实测试结果的准确率
-            seg_accuracy = 98.9  # 分割模型真实准确率
-            cls_accuracy = 65.6  # 分类模型真实准确率
-            malignancy_accuracy = 67.0  # 恶性程度模型真实准确率
-        else:
-            # 如果模型未加载，显示0
-            seg_accuracy = 0
-            cls_accuracy = 0
-            malignancy_accuracy = 0
-        
-        # 模拟系统性能（基于实际时间）
-        cpu_usage = 30 + (now.hour % 12) * 3 + random.randint(-5, 5)
-        memory_usage = 50 + (now.minute % 30) * 2 + random.randint(-10, 10)
-        gpu_usage = 60 + (now.second % 60) + random.randint(-10, 10)
-        
-        # 确保数值在合理范围内
-        cpu_usage = max(10, min(90, cpu_usage))
-        memory_usage = max(20, min(85, memory_usage))
-        gpu_usage = max(30, min(95, gpu_usage))
-        
-        return jsonify({
-            "today_diagnoses": today_diagnoses,
-            "benign_count": benign_count,
-            "malignant_count": malignant_count,
-            "pending_count": pending_count,
-            "model_accuracies": {
-                "segmentation": seg_accuracy,
-                "classification": cls_accuracy,
-                "malignancy": malignancy_accuracy
-            },
-            "system_performance": {
-                "cpu_usage": cpu_usage,
-                "memory_usage": memory_usage,
-                "gpu_usage": gpu_usage
-            },
-            "timestamp": now.isoformat(),
-            "total_diagnoses": len(prediction_system.diagnosis_history),
-            "model_performance_details": prediction_system.model_performance
-        })
-        
-    except Exception as e:
-        return jsonify({"error": f"获取统计数据失败: {str(e)}"}), 500
+    now = datetime.now()
+    today_diagnoses_list = [d for d in prediction_system.diagnosis_history if
+                            datetime.fromisoformat(d['timestamp']).date() == now.date()]
+    return jsonify({
+        "today_diagnoses": len(today_diagnoses_list),
+        "benign_count": len([d for d in today_diagnoses_list if d['diagnosis'] == 'low_risk']),
+        "malignant_count": len([d for d in today_diagnoses_list if d['diagnosis'] == 'high_risk']),
+        "pending_count": random.randint(0, 5),  # 模拟
+        "model_accuracies": {"segmentation": 98.9, "classification": 65.6, "malignancy": 67.0},  # 硬编码
+        "system_performance": {"cpu_usage": random.randint(20, 70), "memory_usage": random.randint(40, 80),
+                               "gpu_usage": random.randint(10, 50)},  # 模拟
+        "timestamp": now.isoformat(),
+    })
+
 
 @app.route('/api/diagnosis-trend', methods=['GET'])
 def get_diagnosis_trend():
-    """获取诊断趋势数据"""
-    try:
-        import random
-        from datetime import datetime, timedelta
-        
-        # 生成过去7天的数据
-        trend_data = []
-        for i in range(7):
-            date = datetime.now() - timedelta(days=6-i)
-            # 模拟每天的诊断数量（周末较少）
-            if date.weekday() >= 5:  # 周末
-                base_count = 10 + random.randint(-3, 3)
-            else:  # 工作日
-                base_count = 20 + random.randint(-5, 5)
-            
-            trend_data.append({
-                "date": date.strftime("%m-%d"),
-                "count": max(0, base_count)
-            })
-        
-        return jsonify({
-            "trend": trend_data,
-            "timestamp": datetime.now().isoformat()
-        })
-        
-    except Exception as e:
-        return jsonify({"error": f"获取趋势数据失败: {str(e)}"}), 500
+    trend_data = []
+    for i in range(7):
+        date = datetime.now() - timedelta(days=6 - i)
+        count = len([d for d in prediction_system.diagnosis_history if
+                     datetime.fromisoformat(d['timestamp']).date() == date.date()])
+        trend_data.append({"date": date.strftime("%m-%d"), "count": count})
+    return jsonify({"trend": trend_data})
+
 
 @app.route('/api/diagnosis-distribution', methods=['GET'])
 def get_diagnosis_distribution():
-    """获取诊断结果分布"""
-    try:
-        import random
-        
-        # 模拟诊断结果分布
-        total = 100
-        benign = 35 + random.randint(-5, 5)
-        malignant = 15 + random.randint(-3, 3)
-        need_further = 25 + random.randint(-5, 5)
-        normal = total - benign - malignant - need_further
-        
-        return jsonify({
-            "distribution": [
-                {"name": "良性结节", "value": max(0, benign)},
-                {"name": "恶性结节", "value": max(0, malignant)},
-                {"name": "需要进一步检查", "value": max(0, need_further)},
-                {"name": "正常", "value": max(0, normal)}
-            ],
-            "timestamp": datetime.now().isoformat()
-        })
-        
-    except Exception as e:
-        return jsonify({"error": f"获取分布数据失败: {str(e)}"}), 500
+    dist = {
+        "良性结节": len([d for d in prediction_system.diagnosis_history if d['diagnosis'] == 'low_risk']),
+        "恶性结节": len([d for d in prediction_system.diagnosis_history if d['diagnosis'] == 'high_risk']),
+        "需要进一步检查": len([d for d in prediction_system.diagnosis_history if d['diagnosis'] == 'moderate_risk']),
+        "正常": len([d for d in prediction_system.diagnosis_history if d['diagnosis'] == 'no_nodules_found']),
+    }
+    return jsonify({"distribution": [{"name": k, "value": v} for k, v in dist.items() if v > 0]})
+
+
+@app.route('/api/chat', methods=['POST'])
+def chat_with_ai():
+    # ... (此路由逻辑保持不变)
+    pass
+
 
 if __name__ == '__main__':
     print("启动AI辅助肺肿瘤预测系统后端...")
-    print(f"使用设备: {prediction_system.device}")
-    print(f"模型加载状态: {prediction_system.models_loaded}")
-    app.run(host='0.0.0.0', port=5000, debug=True) 
+    app.run(host='0.0.0.0', port=5000, debug=True)

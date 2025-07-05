@@ -184,7 +184,7 @@ class NoduleAnalysisApp:
         parser.add_argument('--include-train',
                             help="是否包含训练集(默认只对验证集进行验证)",
                             action='store_true',
-                            default=False,
+                            default=True,
                             )
         # 语义分割模型路径
         parser.add_argument('--segmentation-path',

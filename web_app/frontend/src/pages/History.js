@@ -8,25 +8,30 @@ import {
   Modal, 
   Descriptions, 
   Progress,
-  DatePicker,
   Input,
   Row,
   Col,
   Statistic,
-  Alert
+  Alert,
+  Empty,
+  List,
+  Avatar
 } from 'antd';
-import { 
-  EyeOutlined, 
-  DownloadOutlined, 
+import {
+  EyeOutlined,
+  DownloadOutlined,
   SearchOutlined,
   FileImageOutlined,
   CheckCircleOutlined,
-  ExclamationCircleOutlined
+  ExclamationCircleOutlined,
+  WarningOutlined,
+  HeartOutlined,
+  RadarChartOutlined,
+  CloseCircleOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
 import dayjs from 'dayjs';
 
-const { RangePicker } = DatePicker;
 const { Search } = Input;
 
 const HistoryPage = () => {
@@ -35,7 +40,6 @@ const HistoryPage = () => {
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [searchText, setSearchText] = useState('');
-  const [dateRange, setDateRange] = useState(null);
 
   useEffect(() => {
     fetchPredictions();
@@ -45,6 +49,7 @@ const HistoryPage = () => {
     setLoading(true);
     try {
       const response = await axios.get('/api/predictions');
+      // 后端返回的是最新的在前面，这里我们保持这个顺序
       setPredictions(response.data.predictions);
     } catch (error) {
       console.error('获取历史记录失败:', error);
@@ -53,28 +58,35 @@ const HistoryPage = () => {
     }
   };
 
-  const handleViewDetails = (record) => {
+  const handleViewDetails = async (record) => {
+    // 假设历史记录列表只包含摘要，如果需要完整数据，可以再从后端获取
+    // 在我们当前的设计中，历史记录应该已经包含了所有需要的信息
     setSelectedRecord(record);
     setModalVisible(true);
   };
 
-  const getDiagnosisColor = (diagnosis) => {
-    switch (diagnosis) {
-      case '良性':
-        return 'green';
-      case '恶性':
-        return 'red';
-      case '需要进一步检查':
-        return 'orange';
+  const getOverallFindingInfo = (finding) => {
+    switch(finding) {
+      case 'high_risk':
+        return { color: 'red', text: '高风险', icon: <ExclamationCircleOutlined /> };
+      case 'moderate_risk':
+        return { color: 'orange', text: '中等风险', icon: <WarningOutlined /> };
+      case 'low_risk':
+        return { color: 'green', text: '低风险', icon: <CheckCircleOutlined /> };
+      case 'no_nodules_found':
+        return { color: 'blue', text: '未发现结节', icon: <HeartOutlined /> };
       default:
-        return 'blue';
+        return { color: 'grey', text: finding || '未知', icon: <CloseCircleOutlined /> };
     }
   };
 
-  const getConfidenceColor = (confidence) => {
-    if (confidence >= 0.8) return 'green';
-    if (confidence >= 0.6) return 'orange';
-    return 'red';
+  const getMalignancyColor = (level) => {
+    switch (level) {
+      case 'high': return 'red';
+      case 'medium': return 'orange';
+      case 'low': return 'green';
+      default: return 'blue';
+    }
   };
 
   const columns = [
@@ -88,33 +100,26 @@ const HistoryPage = () => {
       title: '文件名',
       dataIndex: 'filename',
       key: 'filename',
-      render: (text) => (
-        <Space>
-          <FileImageOutlined />
-          {text}
-        </Space>
-      ),
     },
     {
-      title: '诊断结果',
+      title: '总体诊断',
       dataIndex: 'diagnosis',
       key: 'diagnosis',
-      render: (diagnosis) => (
-        <Tag color={getDiagnosisColor(diagnosis)}>
-          {diagnosis}
-        </Tag>
-      ),
+      render: (diagnosis) => {
+        const info = getOverallFindingInfo(diagnosis);
+        return <Tag color={info.color}>{info.text}</Tag>;
+      },
     },
     {
-      title: '置信度',
+      title: '最高恶性概率',
       dataIndex: 'confidence',
       key: 'confidence',
       render: (confidence) => (
-        <Progress 
-          percent={confidence * 100} 
-          size="small" 
-          status="active"
-          strokeColor={getConfidenceColor(confidence)}
+        <Progress
+          percent={(confidence || 0) * 100}
+          size="small"
+          status="exception"
+          format={percent => `${percent.toFixed(2)}%`}
         />
       ),
     },
@@ -130,43 +135,27 @@ const HistoryPage = () => {
       key: 'action',
       render: (_, record) => (
         <Space size="middle">
-          <Button 
-            type="link" 
+          <Button
+            type="link"
             icon={<EyeOutlined />}
             onClick={() => handleViewDetails(record)}
           >
             查看详情
-          </Button>
-          <Button 
-            type="link" 
-            icon={<DownloadOutlined />}
-          >
-            下载报告
           </Button>
         </Space>
       ),
     },
   ];
 
-  const filteredPredictions = predictions.filter(prediction => {
-    const matchesSearch = prediction.filename.toLowerCase().includes(searchText.toLowerCase()) ||
-                         prediction.diagnosis.toLowerCase().includes(searchText.toLowerCase());
-    
-    const matchesDate = !dateRange || (
-      dayjs(prediction.timestamp).isAfter(dateRange[0]) && 
-      dayjs(prediction.timestamp).isBefore(dateRange[1])
-    );
-    
-    return matchesSearch && matchesDate;
-  });
+  const filteredPredictions = predictions.filter(p =>
+    p.filename.toLowerCase().includes(searchText.toLowerCase())
+  );
 
   const statistics = {
     total: predictions.length,
-    benign: predictions.filter(p => p.diagnosis === '良性').length,
-    malignant: predictions.filter(p => p.diagnosis === '恶性').length,
-    averageConfidence: predictions.length > 0 
-      ? (predictions.reduce((sum, p) => sum + p.confidence, 0) / predictions.length * 100).toFixed(1)
-      : 0
+    high_risk: predictions.filter(p => p.diagnosis === 'high_risk').length,
+    low_risk: predictions.filter(p => p.diagnosis === 'low_risk').length,
+    no_nodules: predictions.filter(p => p.diagnosis === 'no_nodules_found').length
   };
 
   return (
@@ -174,8 +163,8 @@ const HistoryPage = () => {
       <Row gutter={[16, 16]}>
         <Col span={24}>
           <Alert
-            message="历史记录"
-            description="查看所有CT图像分析的历史记录，包括诊断结果、置信度和详细分析报告。"
+            message="诊断历史记录"
+            description="这里记录了所有已完成的CT图像分析。您可以搜索并查看每一次分析的详细报告。"
             type="info"
             showIcon
           />
@@ -185,141 +174,104 @@ const HistoryPage = () => {
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} sm={12} lg={6}>
           <Card>
-            <Statistic
-              title="总分析数"
-              value={statistics.total}
-              prefix={<FileImageOutlined />}
-              valueStyle={{ color: '#1890ff' }}
-            />
+            <Statistic title="总分析数" value={statistics.total} prefix={<FileImageOutlined />} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card>
-            <Statistic
-              title="良性诊断"
-              value={statistics.benign}
-              prefix={<CheckCircleOutlined />}
-              valueStyle={{ color: '#52c41a' }}
-            />
+            <Statistic title="高风险诊断" value={statistics.high_risk} prefix={<ExclamationCircleOutlined />} valueStyle={{ color: '#cf1322' }}/>
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card>
-            <Statistic
-              title="恶性诊断"
-              value={statistics.malignant}
-              prefix={<ExclamationCircleOutlined />}
-              valueStyle={{ color: '#cf1322' }}
-            />
+            <Statistic title="低风险诊断" value={statistics.low_risk} prefix={<CheckCircleOutlined />} valueStyle={{ color: '#52c41a' }} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card>
-            <Statistic
-              title="平均置信度"
-              value={statistics.averageConfidence}
-              suffix="%"
-              valueStyle={{ color: '#faad14' }}
-            />
+            <Statistic title="未发现结节" value={statistics.no_nodules} prefix={<HeartOutlined />} valueStyle={{ color: '#1890ff' }} />
           </Card>
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        <Col span={24}>
-          <Card title="筛选和搜索">
-            <Row gutter={[16, 16]}>
-              <Col xs={24} md={12}>
-                <Search
-                  placeholder="搜索文件名或诊断结果"
-                  allowClear
-                  enterButton={<SearchOutlined />}
-                  value={searchText}
-                  onChange={(e) => setSearchText(e.target.value)}
-                />
-              </Col>
-              <Col xs={24} md={12}>
-                <RangePicker
-                  placeholder={['开始日期', '结束日期']}
-                  value={dateRange}
-                  onChange={setDateRange}
-                  style={{ width: '100%' }}
-                />
-              </Col>
-            </Row>
-          </Card>
-        </Col>
-      </Row>
+      <Card style={{ marginTop: 16 }}>
+        <Search
+          placeholder="按文件名搜索..."
+          allowClear
+          enterButton
+          onSearch={setSearchText}
+        />
+      </Card>
 
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        <Col span={24}>
-          <Card title="分析历史记录">
-            <Table
-              columns={columns}
-              dataSource={filteredPredictions}
-              rowKey="id"
-              loading={loading}
-              pagination={{
-                pageSize: 10,
-                showSizeChanger: true,
-                showQuickJumper: true,
-                showTotal: (total, range) => 
-                  `第 ${range[0]}-${range[1]} 条，共 ${total} 条记录`,
-              }}
-            />
-          </Card>
-        </Col>
-      </Row>
+      <Card title="分析历史列表" style={{ marginTop: 16 }}>
+        <Table
+          columns={columns}
+          dataSource={filteredPredictions}
+          rowKey="id"
+          loading={loading}
+          pagination={{ pageSize: 10 }}
+        />
+      </Card>
 
       <Modal
         title="详细分析报告"
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
         footer={[
-          <Button key="close" onClick={() => setModalVisible(false)}>
-            关闭
-          </Button>,
-          <Button key="download" type="primary" icon={<DownloadOutlined />}>
-            下载报告
-          </Button>,
+          <Button key="close" onClick={() => setModalVisible(false)}>关闭</Button>,
+          <Button key="download" type="primary" icon={<DownloadOutlined />}>下载PDF报告</Button>,
         ]}
         width={800}
       >
         {selectedRecord && (
-          <Descriptions bordered column={2}>
-            <Descriptions.Item label="记录ID" span={1}>
-              {selectedRecord.id}
-            </Descriptions.Item>
-            <Descriptions.Item label="文件名" span={1}>
-              {selectedRecord.filename}
-            </Descriptions.Item>
-            <Descriptions.Item label="诊断结果" span={1}>
-              <Tag color={getDiagnosisColor(selectedRecord.diagnosis)}>
-                {selectedRecord.diagnosis}
-              </Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="置信度" span={1}>
-              <Progress 
-                percent={selectedRecord.confidence * 100} 
-                size="small"
-                strokeColor={getConfidenceColor(selectedRecord.confidence)}
-              />
-            </Descriptions.Item>
-            <Descriptions.Item label="分析时间" span={2}>
-              {dayjs(selectedRecord.timestamp).format('YYYY-MM-DD HH:mm:ss')}
-            </Descriptions.Item>
-            <Descriptions.Item label="医疗建议" span={2}>
-              <ul>
-                <li>建议进行定期随访</li>
-                <li>考虑进行活检确认</li>
-                <li>建议3个月后复查</li>
-              </ul>
-            </Descriptions.Item>
-          </Descriptions>
+          <Row gutter={[16, 16]}>
+            <Col span={12}>
+              <Card title="分析摘要" size="small">
+                <Descriptions bordered column={1} size="small">
+                  <Descriptions.Item label="总体发现">
+                    <Tag color={getOverallFindingInfo(selectedRecord.diagnosis).color}>{getOverallFindingInfo(selectedRecord.diagnosis).text}</Tag>
+                  </Descriptions.Item>
+                   <Descriptions.Item label="检测到结节">{selectedRecord.summary.nodule_count}</Descriptions.Item>
+                   <Descriptions.Item label="最高恶性概率">
+                      <Progress percent={(selectedRecord.confidence || 0) * 100} size="small" status="exception" format={p => `${p.toFixed(2)}%`} />
+                   </Descriptions.Item>
+                </Descriptions>
+              </Card>
+            </Col>
+            <Col span={12}>
+                <Card title="最可疑结节" size="small">
+                    {selectedRecord.summary.most_concerning_nodule ? (
+                        <Descriptions bordered column={1} size="small">
+                             <Descriptions.Item label="结节ID">{selectedRecord.summary.most_concerning_nodule.id}</Descriptions.Item>
+                             <Descriptions.Item label="恶性风险">{selectedRecord.summary.most_concerning_nodule.malignancy_level.toUpperCase()}</Descriptions.Item>
+                             <Descriptions.Item label="恶性概率">{(selectedRecord.summary.most_concerning_nodule.malignancy_probability * 100).toFixed(4)}%</Descriptions.Item>
+                        </Descriptions>
+                    ) : <Empty description="无" />}
+                </Card>
+            </Col>
+             <Col span={24}>
+                <Card title={`结节详细列表 (${selectedRecord.summary.nodule_count}个)`} size="small">
+                    <List
+                        dataSource={selectedRecord.nodules}
+                        renderItem={item => (
+                        <List.Item>
+                            <List.Item.Meta
+                            avatar={<Avatar style={{ backgroundColor: getMalignancyColor(item.malignancy_level) }} icon={<RadarChartOutlined />} />}
+                            title={`结节 #${item.id}`}
+                            description={`恶性概率: ${item.malignancy_probability !== null ? `${(item.malignancy_probability * 100).toFixed(4)}%` : 'N/A'}`}
+                            />
+                            <Tag color={getMalignancyColor(item.malignancy_level)}>{item.malignancy_level.toUpperCase()}</Tag>
+                        </List.Item>
+                        )}
+                        locale={{ emptyText: <Empty description="未发现结节" /> }}
+                    />
+                </Card>
+            </Col>
+          </Row>
         )}
       </Modal>
     </div>
   );
 };
 
-export default HistoryPage; 
+export default HistoryPage;
