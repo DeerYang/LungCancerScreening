@@ -1,12 +1,14 @@
+// src/pages/History.js
+
 import React, { useState, useEffect } from 'react';
-import { 
-  Table, 
-  Card, 
-  Tag, 
-  Button, 
-  Space, 
-  Modal, 
-  Descriptions, 
+import {
+  Table,
+  Card,
+  Tag,
+  Button,
+  Space,
+  Modal,
+  Descriptions,
   Progress,
   Input,
   Row,
@@ -15,7 +17,8 @@ import {
   Alert,
   Empty,
   List,
-  Avatar
+  Avatar,
+  message // 引入 message
 } from 'antd';
 import {
   EyeOutlined,
@@ -31,6 +34,7 @@ import {
 } from '@ant-design/icons';
 import axios from 'axios';
 import dayjs from 'dayjs';
+import CTViewer from '../components/CTViewer'; // 引入 CTViewer 组件
 
 const { Search } = Input;
 
@@ -40,6 +44,7 @@ const HistoryPage = () => {
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [searchText, setSearchText] = useState('');
+  const [ctModalVisible, setCtModalVisible] = useState(false); // 新增 state for CTViewer
 
   useEffect(() => {
     fetchPredictions();
@@ -49,7 +54,6 @@ const HistoryPage = () => {
     setLoading(true);
     try {
       const response = await axios.get('/api/predictions');
-      // 后端返回的是最新的在前面，这里我们保持这个顺序
       setPredictions(response.data.predictions);
     } catch (error) {
       console.error('获取历史记录失败:', error);
@@ -58,11 +62,18 @@ const HistoryPage = () => {
     }
   };
 
-  const handleViewDetails = async (record) => {
-    // 假设历史记录列表只包含摘要，如果需要完整数据，可以再从后端获取
-    // 在我们当前的设计中，历史记录应该已经包含了所有需要的信息
+  const handleViewDetails = (record) => {
     setSelectedRecord(record);
     setModalVisible(true);
+  };
+
+  // 新增：处理查看CT图像的点击事件
+  const handleViewCtImages = () => {
+    if (selectedRecord && selectedRecord.total_slices) {
+      setCtModalVisible(true);
+    } else {
+      message.warning('无法查看图像，此记录的原始CT数据已不在缓存中。请重新上传以进行可视化分析。');
+    }
   };
 
   const getOverallFindingInfo = (finding) => {
@@ -164,7 +175,7 @@ const HistoryPage = () => {
         <Col span={24}>
           <Alert
             message="诊断历史记录"
-            description="这里记录了所有已完成的CT图像分析。您可以搜索并查看每一次分析的详细报告。"
+            description="这里记录了所有已完成的CT图像分析。您可以搜索并查看每一次分析的详细报告。注意：只有在本次服务运行期间分析的图像才能进行可视化查看。"
             type="info"
             showIcon
           />
@@ -219,7 +230,8 @@ const HistoryPage = () => {
         onCancel={() => setModalVisible(false)}
         footer={[
           <Button key="close" onClick={() => setModalVisible(false)}>关闭</Button>,
-          <Button key="download" type="primary" icon={<DownloadOutlined />}>下载PDF报告</Button>,
+          <Button key="ct" type="primary" icon={<EyeOutlined />} onClick={handleViewCtImages}>显示CT图像</Button>,
+          <Button key="download" icon={<DownloadOutlined />}>下载PDF报告</Button>,
         ]}
         width={800}
       >
@@ -250,7 +262,7 @@ const HistoryPage = () => {
                 </Card>
             </Col>
              <Col span={24}>
-                <Card title={`结节详细列表 (${selectedRecord.summary.nodule_count}个)`} size="small">
+                <Card title={`结节详细列表 (${selectedRecord.nodules.length}个)`} size="small">
                     <List
                         dataSource={selectedRecord.nodules}
                         renderItem={item => (
@@ -270,6 +282,13 @@ const HistoryPage = () => {
           </Row>
         )}
       </Modal>
+
+      {/* 新增 CTViewer 实例 */}
+      <CTViewer
+        visible={ctModalVisible}
+        onCancel={() => setCtModalVisible(false)}
+        result={selectedRecord}
+      />
     </div>
   );
 };

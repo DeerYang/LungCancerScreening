@@ -1,13 +1,15 @@
+// src/pages/Upload.js
+
 import React, { useState } from 'react';
-import { 
-  Upload, 
-  Button, 
-  Card, 
-  Row, 
-  Col, 
-  Result, 
-  Descriptions, 
-  Tag, 
+import {
+  Upload,
+  Button,
+  Card,
+  Row,
+  Col,
+  Result,
+  Descriptions,
+  Tag,
   Progress,
   Alert,
   Spin,
@@ -26,9 +28,11 @@ import {
   CloseCircleOutlined,
   HeartOutlined,
   RadarChartOutlined,
-  WarningOutlined
+  WarningOutlined,
+  EyeOutlined // 导入新图标
 } from '@ant-design/icons';
 import axios from 'axios';
+import CTViewer from '../components/CTViewer'; // 假设 CTViewer.js 和 Upload.js 在同一目录
 
 const { Title } = Typography;
 
@@ -37,8 +41,8 @@ const UploadPage = () => {
   const [result, setResult] = useState(null);
   const [mhdFile, setMhdFile] = useState(null);
   const [rawFile, setRawFile] = useState(null);
+  const [ctModalVisible, setCtModalVisible] = useState(false);
 
-  // ... (所有JS逻辑函数保持不变) ...
   const handleMhdFileChange = ({ file }) => {
     if (file.status === 'removed') {
       setMhdFile(null);
@@ -194,7 +198,18 @@ const UploadPage = () => {
           </Col>
 
           <Col xs={24} md={12}>
-            <Card title={`结节详细列表 (${summary.nodule_count}个)`}>
+            <Card
+              title={`结节详细列表 (${summary.nodule_count}个)`}
+              extra={
+                <Button
+                  icon={<EyeOutlined />}
+                  onClick={() => setCtModalVisible(true)}
+                  disabled={!result || !result.total_slices || summary.nodule_count === 0}
+                >
+                  显示CT图像
+                </Button>
+              }
+            >
               <List
                 itemLayout="horizontal"
                 dataSource={nodules}
@@ -218,6 +233,12 @@ const UploadPage = () => {
             </Card>
           </Col>
         </Row>
+
+        <CTViewer
+          visible={ctModalVisible}
+          onCancel={() => setCtModalVisible(false)}
+          result={result}
+        />
       </div>
     );
   };
@@ -237,7 +258,6 @@ const UploadPage = () => {
             style={{ marginBottom: '24px' }}
           />
 
-          {/* 修复：为上传区域容器设置最小高度 */}
           <div style={{ minHeight: '160px', marginBottom: '24px' }}>
             <Row gutter={16}>
                 <Col span={12}>
