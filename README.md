@@ -107,6 +107,91 @@ cd web_app/frontend
 npm install
 ```
 
+**Step 5: Configure API Key / 配置API密钥 (Required for Chatbot / 聊天机器人功能必需)**
+
+The integrated AI Chatbot is powered by Alibaba Cloud's Dashscope service (通义千问). To enable this feature, you must configure your API Key.
+<br>
+集成的AI智能助手由阿里云通义千问大模型驱动。要启用此功能，您需要配置您的API Key。
+
+1.  First, obtain your API Key from the Alibaba Cloud Bailian Console: [https://bailian.console.aliyun.com/](https://bailian.console.aliyun.com/?tab=api#/api).
+    <br>首先，请从阿里云百炼控制台获取您的API Key。
+
+2.  Configure the key using one of the following methods. The SDK will search for the key in this order.
+    <br>然后，使用以下任一方法进行配置。SDK将按以下顺序查找密钥。
+
+    ---
+
+    #### Method 1: Environment Variable (Recommended for Servers & CI/CD)
+    #### 方法一：环境变量（推荐用于服务器和持续集成环境）
+    
+    Set an environment variable named `DASHSCOPE_API_KEY`. This is the most flexible method for production and development environments.
+    <br>
+    设置一个名为 `DASHSCOPE_API_KEY` 的环境变量。这是用于生产和开发环境最灵活的方法。
+
+    *   **On macOS/Linux:**
+        ```bash
+        export DASHSCOPE_API_KEY="sk-your-actual-api-key"
+        ```
+        *(To make this permanent, add the line to your shell's startup file, e.g., `~/.bashrc` or `~/.zshrc`.)*
+        <br>
+        *(为使其永久生效，可将此行添加到您终端的启动文件中，如 `~/.bashrc` 或 `~/.zshrc`。)*
+
+    *   **On Windows (PowerShell):**
+        ```powershell
+        $env:DASHSCOPE_API_KEY="sk-your-actual-api-key"
+        ```
+        *(To set it permanently, use the System Properties control panel.)*
+        <br>
+        *(如需永久设置，请使用系统属性控制面板。)*
+
+    ---
+
+    #### Method 2: Credentials File (Recommended for Local Development)
+    #### 方法二：凭证文件（推荐用于本地开发）
+    
+    Create a configuration file in your user's home directory. This is useful for keeping all your keys in one secure place on your local machine.
+    <br>
+    在您的用户主目录下创建一个配置文件。此方法便于在本地开发机上统一管理密钥。
+
+    1.  Create a file at the following path: `~/.dashscope/api_key`.
+        <br>在以下路径创建文件：`~/.dashscope/api_key`。
+        *(On Windows, `~` usually refers to `C:\Users\YourUsername`.)*
+        <br>
+        *(在Windows上, `~` 通常指 `C:\Users\您的用户名`。)*
+
+    2.  Open the file and paste **only your API key** into it. The file content should be just the key itself.
+        <br>
+        打开文件，将您的API Key**单独**粘贴进去。文件内容应仅包含密钥本身。
+        
+        Example file content (`~/.dashscope/api_key`):
+        <br>
+        文件内容示例 (`~/.dashscope/api_key`):
+        ```
+        sk-your-actual-api-key
+        ```
+
+    ---
+
+    #### Method 3: Direct Code Modification (Not Recommended)
+    #### 方法三：直接修改代码（不推荐）
+    
+    You can directly edit the source code as a last resort. **Warning: This is insecure, as it risks exposing your key in version control.**
+    <br>
+    作为最后的手段，您可以直接修改源代码。**警告：此方法不安全，有将密钥泄露到版本控制系统中的风险。**
+
+    *   Open `web_app/app.py`. / 打开 `web_app/app.py` 文件。
+    *   Find the following line and replace the placeholder with your actual key:
+        <br>找到下面这行代码，并将占位符替换为您的真实密钥：
+        ```python
+        # In web_app/app.py
+        dashscope.api_key = os.getenv('DASHSCOPE_API_KEY', 'sk-your-actual-api-key')
+        ```
+
+    ---
+    *(If you wish to use a different language model, you will need to modify the `chat_with_ai` function in `web_app/app.py` to call your preferred model's API.)*
+    <br>
+    *(如果您希望使用其他大语言模型，您需要修改 `web_app/app.py` 中的 `chat_with_ai` 函数，以调用您偏好的模型API。)*
+
 ### 3. Running the Application / 运行项目
 
 A convenience script is provided to start both the backend and frontend servers simultaneously.
