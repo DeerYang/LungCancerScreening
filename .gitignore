@@ -35,7 +35,8 @@ venv.bak/
 # Large data and models (VERY IMPORTANT)
 data-unversioned/
 web_app/uploads/
-data/
+data/annotations.csv
+data/candidates.csv
 
 # Frontend (VERY IMPORTANT)
 web_app/data-unversioned
