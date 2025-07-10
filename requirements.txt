@@ -47,3 +47,4 @@ dnspython==2.4.2
 
 Flask-SQLAlchemy
 PyMySQL
+cryptography
