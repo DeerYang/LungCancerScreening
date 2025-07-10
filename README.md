@@ -198,9 +198,9 @@ A convenience script is provided to start both the backend and frontend servers 
 <br>
 我们提供了一个便捷脚本来同时启动后端和前端服务。
 
-From the project **root directory** (`LungCancerScreening/`), run:
+From the project **directory** (`LungCancerScreening/web_app`), run:
 <br>
-在项目的**根目录** (`LungCancerScreening/`) 下，运行：
+在项目的**目录** (`LungCancerScreening/web_app`) 下，运行：
 ```bash
 python start_system.py
 ```
