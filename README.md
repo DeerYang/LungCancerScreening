@@ -41,13 +41,6 @@ An end-to-end open-source system for AI-assisted lung cancer screening. This pro
 *   **Complete Training Scripts**: The full PyTorch training pipeline is provided, allowing for model reproduction and further research.
     <br>**完整的训练脚本**: 提供全部PyTorch训练代码，方便用户复现模型或进行二次研究。
 
-## 🖼️ Screenshots / 应用截图
-
-| Dashboard / 仪表盘 | Upload & Analysis / 上传与分析 | History & Chat / 历史记录与AI咨询 |
-| :---: | :---: | :---: |
-| *(Dashboard Screenshot)* | *(Upload & Analysis Screenshot)* | *(History & Chat Screenshot)* |
-
-
 ## 🛠️ Tech Stack / 技术栈
 
 *   **Backend**: Python, Flask, PyTorch, SQLAlchemy, PyMySQL, SimpleITK, NumPy, SciPy
