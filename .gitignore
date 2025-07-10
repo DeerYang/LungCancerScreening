@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtualenv
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# PyCharm
+.idea/
+
+# Large data and models (VERY IMPORTANT)
+data-unversioned/
+web_app/uploads/
+data/
+
+# Frontend (VERY IMPORTANT)
+web_app/data-unversioned
+web_app/frontend/node_modules/
+web_app/frontend/build/
+web_app/frontend/.pnp.js
+web_app/frontend/.pnp.loader.mjs
+web_app/frontend/coverage/
+
+# General
+.DS_Store
+Thumbs.db
+clearCache.py
+datasetTest.py
+showCandidate.py
+vis.py
