@@ -33,7 +33,8 @@ venv.bak/
 .idea/
 
 # Large data and models (VERY IMPORTANT)
-data-unversioned/
+data-unversioned/cache
+data-unversioned/data
 web_app/uploads/
 data/annotations.csv
 data/candidates.csv
