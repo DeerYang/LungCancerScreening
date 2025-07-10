@@ -449,8 +449,83 @@ def get_diagnosis_distribution():
 
 @app.route('/api/chat', methods=['POST'])
 def chat_with_ai():
-    # 此路由逻辑保持不变
-    pass
+    """
+    与集成的大语言模型进行交互。
+    可以接收一个可选的 predictionId，以便在提问时提供上下文。
+    """
+    try:
+        data = request.get_json()
+        user_message = data.get('message')
+        prediction_id = data.get('predictionId')  # 从前端接收可选的ID
+
+        if not user_message:
+            return jsonify({"error": "消息内容不能为空"}), 400
+
+        # --- 核心修改：构建上下文和提示词 ---
+
+        # 1. 基础系统提示词 (System Prompt)
+        system_prompt = (
+            "你是一个专业的AI医疗助手，专门帮助医生解读肺部CT扫描的AI分析报告。"
+            "你的回答应该专业、严谨、简洁，并始终强调最终诊断需要由执业医师做出。"
+            "请使用中文回答。"
+        )
+
+        # 2. 如果有 predictionId，查询数据库并构建上下文
+        context_prompt = ""
+        if prediction_id:
+            diagnosis_record = Diagnosis.query.get(prediction_id)
+            if diagnosis_record:
+                # 将诊断结果格式化为一段清晰的文本
+                report_data = diagnosis_record.to_dict()
+                summary = report_data.get('summary', {})
+                nodules = report_data.get('nodules', [])
+
+                context_prompt = f"""
+以下是关于文件 '{report_data.get('filename')}' (ID: {prediction_id}) 的AI分析报告摘要，请基于此信息回答问题：
+
+[报告上下文]
+- 总体发现: {summary.get('overall_finding', 'N/A')}
+- 检测到的结节数量: {summary.get('nodule_count', 0)}
+- 最可疑结节的恶性风险等级: {summary.get('most_concerning_nodule', {}).get('malignancy_level', 'N/A')}
+- 最可疑结节的恶性概率: {summary.get('most_concerning_nodule', {}).get('malignancy_probability', 'N/A')}
+- 结节列表详情:
+"""
+                if nodules:
+                    for nodule in nodules:
+                        context_prompt += f"  - 结节ID {nodule['id']}: 结节可能性 {nodule['nodule_probability']:.2%}，恶性风险 '{nodule['malignancy_level']}'，恶性概率 {nodule['malignancy_probability'] if nodule['malignancy_probability'] is not None else 'N/A'}\n"
+                else:
+                    context_prompt += "  - 未发现结节。\n"
+                context_prompt += "[报告上下文结束]\n\n"
+
+        # 3. 组合最终的提示词
+        # 我们使用一个简单的结构，将上下文和用户问题都放在用户角色中
+        final_user_prompt = f"{context_prompt}用户问题: {user_message}"
+
+        print("--- 向大模型发送的最终用户提示词 ---")
+        print(final_user_prompt)
+        print("---------------------------------")
+
+        # --- 调用通义千问 API ---
+        response = Generation.call(
+            model='qwen-turbo',
+            messages=[
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': final_user_prompt}
+            ],
+            result_format='message'  # 设置为 message 格式
+        )
+
+        if response.status_code == 200:
+            ai_response = response.output.choices[0]['message']['content']
+            return jsonify({"response": ai_response})
+        else:
+            error_msg = f"通义千问API错误: {response.code} - {response.message}"
+            print(error_msg)
+            return jsonify({"error": error_msg}), 500
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"聊天功能异常: {str(e)}"}), 500
 
 
 @app.route('/api/ct-slice/<series_uid>/<int:slice_ndx>', methods=['GET'])

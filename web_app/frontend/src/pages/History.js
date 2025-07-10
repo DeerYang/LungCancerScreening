@@ -1,50 +1,31 @@
 // src/pages/History.js
 
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom'; // 1. 引入 Link
 import {
-  Table,
-  Card,
-  Tag,
-  Button,
-  Space,
-  Modal,
-  Descriptions,
-  Progress,
-  Input,
-  Row,
-  Col,
-  Statistic,
-  Alert,
-  Empty,
-  List,
-  Avatar,
-  message // 引入 message
+  Table, Card, Tag, Button, Space, Modal, Descriptions, Progress,
+  Input, Row, Col, Statistic, Alert, Empty, List, Avatar, message
 } from 'antd';
 import {
-  EyeOutlined,
-  DownloadOutlined,
-  SearchOutlined,
-  FileImageOutlined,
-  CheckCircleOutlined,
-  ExclamationCircleOutlined,
-  WarningOutlined,
-  HeartOutlined,
-  RadarChartOutlined,
-  CloseCircleOutlined
+  EyeOutlined, DownloadOutlined, SearchOutlined, FileImageOutlined,
+  CheckCircleOutlined, ExclamationCircleOutlined, WarningOutlined,
+  HeartOutlined, RadarChartOutlined, CloseCircleOutlined,
+  MessageOutlined // 2. 引入新图标
 } from '@ant-design/icons';
 import axios from 'axios';
 import dayjs from 'dayjs';
-import CTViewer from '../components/CTViewer'; // 引入 CTViewer 组件
+import CTViewer from '../components/CTViewer';
 
 const { Search } = Input;
 
 const HistoryPage = () => {
+  // ... (组件的其他 state 和函数保持不变)
   const [predictions, setPredictions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [searchText, setSearchText] = useState('');
-  const [ctModalVisible, setCtModalVisible] = useState(false); // 新增 state for CTViewer
+  const [ctModalVisible, setCtModalVisible] = useState(false);
 
   useEffect(() => {
     fetchPredictions();
@@ -67,7 +48,6 @@ const HistoryPage = () => {
     setModalVisible(true);
   };
 
-  // 新增：处理查看CT图像的点击事件
   const handleViewCtImages = () => {
     if (selectedRecord && selectedRecord.total_slices) {
       setCtModalVisible(true);
@@ -100,59 +80,37 @@ const HistoryPage = () => {
     }
   };
 
+
   const columns = [
+    { title: 'ID', dataIndex: 'id', key: 'id', width: 80 },
+    { title: '文件名', dataIndex: 'filename', key: 'filename' },
     {
-      title: 'ID',
-      dataIndex: 'id',
-      key: 'id',
-      width: 80,
-    },
-    {
-      title: '文件名',
-      dataIndex: 'filename',
-      key: 'filename',
-    },
-    {
-      title: '总体诊断',
-      dataIndex: 'diagnosis',
-      key: 'diagnosis',
+      title: '总体诊断', dataIndex: 'diagnosis', key: 'diagnosis',
       render: (diagnosis) => {
         const info = getOverallFindingInfo(diagnosis);
         return <Tag color={info.color}>{info.text}</Tag>;
       },
     },
     {
-      title: '最高恶性概率',
-      dataIndex: 'confidence',
-      key: 'confidence',
+      title: '最高恶性概率', dataIndex: 'confidence', key: 'confidence',
       render: (confidence) => (
-        <Progress
-          percent={(confidence || 0) * 100}
-          size="small"
-          status="exception"
-          format={percent => `${percent.toFixed(2)}%`}
-        />
+        <Progress percent={(confidence || 0) * 100} size="small" status="exception" format={percent => `${percent.toFixed(2)}%`} />
       ),
     },
     {
-      title: '分析时间',
-      dataIndex: 'timestamp',
-      key: 'timestamp',
+      title: '分析时间', dataIndex: 'timestamp', key: 'timestamp',
       render: (timestamp) => dayjs(timestamp).format('YYYY-MM-DD HH:mm:ss'),
       sorter: (a, b) => dayjs(a.timestamp).unix() - dayjs(b.timestamp).unix(),
     },
     {
-      title: '操作',
-      key: 'action',
+      title: '操作', key: 'action',
       render: (_, record) => (
         <Space size="middle">
-          <Button
-            type="link"
-            icon={<EyeOutlined />}
-            onClick={() => handleViewDetails(record)}
-          >
-            查看详情
-          </Button>
+          <Button type="link" icon={<EyeOutlined />} onClick={() => handleViewDetails(record)}>查看详情</Button>
+          {/* --- 3. 核心修改：添加“咨询AI”按钮 --- */}
+          <Link to={`/chat?id=${record.id}&filename=${record.filename}`}>
+            <Button type="link" icon={<MessageOutlined />}>咨询AI</Button>
+          </Link>
         </Space>
       ),
     },
@@ -169,13 +127,14 @@ const HistoryPage = () => {
     no_nodules: predictions.filter(p => p.diagnosis === 'no_nodules_found').length
   };
 
+  // ... (组件的其余JSX部分保持不变)
   return (
     <div>
       <Row gutter={[16, 16]}>
         <Col span={24}>
           <Alert
             message="诊断历史记录"
-            description="这里记录了所有已完成的CT图像分析。您可以搜索并查看每一次分析的详细报告。注意：只有在本次服务运行期间分析的图像才能进行可视化查看。"
+            description="这里记录了所有已完成的CT图像分析。您可以搜索、查看详细报告，或针对特定报告向AI助手提问。"
             type="info"
             showIcon
           />
@@ -224,7 +183,8 @@ const HistoryPage = () => {
         />
       </Card>
 
-      <Modal
+      {/* ... Modal 和 CTViewer 的代码保持不变 ... */}
+       <Modal
         title="详细分析报告"
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
@@ -283,7 +243,6 @@ const HistoryPage = () => {
         )}
       </Modal>
 
-      {/* 新增 CTViewer 实例 */}
       <CTViewer
         visible={ctModalVisible}
         onCancel={() => setCtModalVisible(false)}
