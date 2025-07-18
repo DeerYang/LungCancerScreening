@@ -557,8 +557,8 @@ def get_ct_slice(series_uid, slice_ndx):
         if not (0 <= slice_ndx < hu_a.shape[0]):
             return jsonify({"error": "Slice index out of bounds."}), 400
 
-        # --- 3. 生成图像（与之前逻辑相同） ---
-        # 肺窗显示
+        # --- 3. 生成图像 ---
+        # 肺窗处理，将HU值映射到人眼最敏感的0-255灰度范围
         window_level, window_width = -600, 1500
         min_val, max_val = window_level - window_width // 2, window_level + window_width // 2
         display_slice = np.clip(hu_a[slice_ndx], min_val, max_val)
@@ -567,7 +567,8 @@ def get_ct_slice(series_uid, slice_ndx):
         img = Image.fromarray(display_slice, 'L').convert('RGB')
         draw = ImageDraw.Draw(img)
 
-        # 绘制边界框
+        # 绘制边界框，前端在请求时，会通过URL参数将当前切片上所有结节的坐标和风险等级传来
+        # 利用Pillow库，实时地在图像上画出对应颜色和大小的矩形框
         nodules_json = request.args.get('nodules')
         if nodules_json:
             nodules_on_slice = json.loads(nodules_json)
